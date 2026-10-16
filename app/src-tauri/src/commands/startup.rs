@@ -11,7 +11,6 @@ pub struct StartupHealth {
     streaming_runtime_ready: bool,
     /// Loopback port the media server is listening on (0 when unavailable).
     streaming_port: u16,
-    sponsor_port: u16,
     /// True when the preferred port was taken and another one was assigned.
     streaming_port_is_fallback: bool,
 }
@@ -50,7 +49,6 @@ pub async fn cmd_get_startup_health(
         app_data_ready,
         streaming_runtime_ready,
         streaming_port: stream_config.port,
-        sponsor_port: crate::server::sponsor_port(),
         streaming_port_is_fallback: stream_config.port != crate::STREAM_PORT,
     })
 }

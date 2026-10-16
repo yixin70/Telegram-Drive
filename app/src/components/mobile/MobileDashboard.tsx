@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 import { BottomNavBar } from './BottomNavBar';
 import { TouchFileList } from './TouchFileList';
 import { ThemeToggle } from '../shared/ThemeToggle';
-import AdsterraBanner from '../shared/AdsterraBanner';
 import { DriveConceptTour } from '../desktop/dashboard/DriveConceptTour';
 import { ActionPopover, ActionItem } from './ActionPopover';
 import { ShareDialog } from '../desktop/dashboard/ShareDialog';
@@ -362,14 +361,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     settingsLoaded,
     updateSetting,
   ]);
-
-  // The in-app sponsor placement is TV-safe and remains available to free users.
-  // Keep it suppressed during media, previews, dialogs, and active transfers so it
-  // never covers playback controls or interrupts a bandwidth-sensitive operation.
-  const adVisible = !playingFile && !pdfFile && !previewFile && !shareFile && !bulkShareLinks
-    && !showHelp && !supporterOfferTrigger && settings.driveTourSeen
-    && !uploadQueue.some(item => ['pending', 'uploading', 'downloading', 'encrypting', 'verifying'].includes(item.status))
-    && !downloadQueue.some(item => ['pending', 'cooldown', 'downloading', 'decrypting', 'verifying'].includes(item.status));
 
   const activeUploadCount = uploadQueue.filter(item => ['pending', 'uploading', 'downloading', 'encrypting', 'verifying'].includes(item.status)).length;
   const activeDownloadCount = downloadQueue.filter(item => ['pending', 'cooldown', 'downloading', 'decrypting', 'verifying'].includes(item.status)).length;
@@ -1452,7 +1443,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   Privacy policy <ExternalLink className="h-3 w-3 text-telegram-primary" aria-hidden="true" />
                 </button>
               </div>
-              <p className="text-[10px] leading-relaxed text-telegram-subtext">Credentials and settings stay on this device. File transfers go directly between this app and Telegram; sponsor content is provided by the named advertising service.</p>
+              <p className="text-[10px] leading-relaxed text-telegram-subtext">Credentials and settings stay on this device. File transfers go directly between this app and Telegram.</p>
             </div>
 
             <div className="p-4 rounded-2xl bg-telegram-hover/20 border border-telegram-border/30 space-y-4">
@@ -1626,16 +1617,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
       {/* Floating Bottom Nav Bar */}
       <BottomNavBar activeTab={activeTab} setActiveTab={setActiveTab} isAndroid={isAndroid} isTelevision={isTelevision} />
-
-      {/* Adsterra Banner (Android only) — z-[60] keeps it above the BottomNavBar (z-50).
-           Positioned at bottom-[144px] to sit cleanly above the nav bar (~60px tall, at bottom-20=80px). */}
-      <div className={`fixed bottom-[144px] left-0 right-0 z-[60] ${isTelevision ? 'tv-sponsor-placement' : ''}`}>
-        <AdsterraBanner
-          visible={adVisible}
-          onSupport={openMobileSupporter}
-          onManualDismiss={() => showSupporterOffer('ad_dismissed')}
-        />
-      </div>
 
       {/* Previews Overlays (Media, PDF & Images) */}
       {playingFile && (

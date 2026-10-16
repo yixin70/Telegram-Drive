@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../context/ThemeContext';
 import { getLanguageInfo, type SupportedLanguage } from '../../i18n/languages';
 import { ensureLanguageResource } from '../../i18n';
-import { DesktopAdBanner } from '../desktop/dashboard/DesktopAdBanner';
 import { SupporterOfferDialog } from '../shared/SupporterOfferDialog';
 import {
   Badge,
@@ -32,7 +31,6 @@ export default function DesignGallery() {
   const [loadedAuditLanguage, setLoadedAuditLanguage] = useState<SupportedLanguage | null>(null);
   const query = new URLSearchParams(window.location.search);
   const localeStress = query.has('locale-stress');
-  const sponsorPreview = query.has('sponsor-preview');
   const supporterPreview = query.has('supporter-preview');
   const supporterPreviewPresentation = query.has('mobile-preview') ? 'bottom-sheet' : 'dialog';
   const activeDirection = localeStress ? getLanguageInfo(auditLanguage).dir : direction;
@@ -49,15 +47,6 @@ export default function DesignGallery() {
   const changeAuditLanguage = (language: SupportedLanguage) => {
     setAuditLanguage(language);
   };
-
-  if (sponsorPreview) {
-    return (
-      <main className="h-screen overflow-hidden bg-app-canvas p-8 text-app-text">
-        <h1 className="text-xl font-semibold">Sponsor placement preview</h1>
-        <DesktopAdBanner previewContent="A quick message from our sponsor" />
-      </main>
-    );
-  }
 
   if (supporterPreview) {
     return (

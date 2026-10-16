@@ -109,8 +109,6 @@ pub mod mp4_utils;
 pub mod server;
 mod server_lifecycle;
 pub mod share_routes;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-mod sponsor_link_bridge;
 pub mod sync_engine;
 pub mod transcode;
 pub mod upload_service;
@@ -128,7 +126,7 @@ pub const STREAM_PORT: u16 = 14201;
 static ACTIVE_STREAM_PORT: std::sync::atomic::AtomicU16 =
     std::sync::atomic::AtomicU16::new(STREAM_PORT);
 
-/// The loopback port serving streams, share pages and the sponsor frame.
+/// The loopback port serving streams and share pages.
 pub fn stream_port() -> u16 {
     ACTIVE_STREAM_PORT.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -147,8 +145,6 @@ fn generate_stream_token() -> String {
 /// Holds the Actix-web server stop handle so we can shut it down
 /// from the RunEvent::Exit handler for graceful Ctrl+C termination.
 pub struct ActixServerHandle(pub Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>>);
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-struct AdServerHandle(Arc<server_lifecycle::LocalServerLifecycle>);
 
 /// Serialized lifecycle for the restartable desktop REST API server.
 pub struct ApiServerLifecycle(pub Arc<server_lifecycle::LocalServerLifecycle>);
@@ -977,9 +973,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init());
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let builder = builder.plugin(sponsor_link_bridge::init());
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_notification::init());
 
     // The updater plugin is not supported on Android and can cause crashes
@@ -1143,38 +1136,6 @@ pub fn run() {
                 .map(|address| address.port())
                 .unwrap_or(0);
             app.manage(StreamConfig { token: stream_token.clone(), port: bound_stream_port });
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            {
-                // The established media origin remains the default. This opt-in
-                // is for the provider/WebView acceptance matrix before rollout.
-                let ad_listener = if std::env::var("TELEGRAM_DRIVE_AD_ORIGIN").ok().as_deref() == Some("separate") {
-                    match server::bind_ad_listener() {
-                        Ok(listener) => Some(listener),
-                        Err(error) => { log::error!("Separate sponsor listener unavailable: {error}"); None }
-                    }
-                } else {None};
-                let ad_lifecycle = server_lifecycle::LocalServerLifecycle::new();
-                let generation = ad_lifecycle.request_restart();
-                app.manage(AdServerHandle(ad_lifecycle.clone()));
-                if let Some(listener) = ad_listener {
-                    let ad_app = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        if !ad_lifecycle.is_current(generation) {
-                            return;
-                        }
-                        match server::start_ad_server(listener) {
-                            Ok(server) => {
-                                let stored = ad_app.state::<AdServerHandle>().0.install_handle(generation, server.handle());
-                                if !stored {server.handle().stop(false).await; return;}
-                                if let Err(error) = server.await {log::error!("Separate sponsor server stopped: {error}");}
-                                ad_lifecycle.server_finished(generation,None);
-                            }
-                            Err(error) => log::error!("Separate sponsor server failed to start: {error}"),
-                        }
-                    });
-                }
-            }
-
 
             // Initialize the passphrase-protected persistent production vault.
             // Test-only MemoryVault must never be constructed by the app.
@@ -1683,13 +1644,6 @@ pub fn run() {
                             handle.stop(true).await;
                         }
                     }
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    if let Some(ad_server) = app_handle.try_state::<AdServerHandle>() {
-                        let handle = ad_server.0.begin_shutdown();
-                        if let Some(handle) = handle {
-                            handle.stop(true).await;
-                        }
-                    }
                     if let Some(api_server) = app_handle.try_state::<ApiServerLifecycle>() {
                         if let Some(handle) = api_server.0.begin_shutdown() {
                             log::info!("Stopping REST API server...");
@@ -1734,16 +1688,6 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     handle.stop(false).await;
                 });
-            }
-
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            if let Some(ad_server) = app_handle.try_state::<AdServerHandle>() {
-                let handle = ad_server.0.begin_shutdown();
-                if let Some(handle) = handle {
-                    tauri::async_runtime::spawn(async move {
-                        handle.stop(false).await;
-                    });
-                }
             }
 
             // 3. Immediate fallbacks for local servers when ExitRequested was bypassed.

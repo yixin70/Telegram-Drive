@@ -781,7 +781,6 @@ async fn refresh_error(
         if let Err(error) = save_state(app, state) {
             return error;
         }
-        SPONSOR_OFFLINE_UNTIL.store(0, std::sync::atomic::Ordering::Release);
     }
     body.and_then(|body| body.error)
         .map(|error| format!("{}: {}", error.code, error.message))
@@ -797,39 +796,6 @@ fn recovery_presence_for_status(
         Err(_) if state.entitlement_token.is_some() || state.revoked => Ok(false),
         Err(error) => Err(error),
     }
-}
-
-// Only signature-verified, device-bound local access may populate this cache.
-// HTTP routes read RAM only; they never initiate verification or show an ad.
-static SPONSOR_OFFLINE_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-
-pub(crate) fn sponsor_requests_suppressed() -> bool {
-    let until = SPONSOR_OFFLINE_UNTIL.load(std::sync::atomic::Ordering::Acquire);
-    until > 0 && unix_time() <= until
-}
-
-fn cache_verified_access(claims: &EntitlementClaims, now: i64) {
-    SPONSOR_OFFLINE_UNTIL.store(
-        if entitlement_access_at(claims, now) == EntitlementAccess::Expired {
-            0
-        } else {
-            claims.offline_until
-        },
-        std::sync::atomic::Ordering::Release,
-    );
-}
-
-#[cfg(feature = "native-e2e")]
-pub(crate) async fn load_sponsor_fixture(
-    token: &str,
-    device: &str,
-    key: &str,
-    now: i64,
-) -> Result<(), String> {
-    let _operation = supporter_operation().await;
-    let claims = parse_and_verify_token_with_key(token, device, key)?;
-    cache_verified_access(&claims, now);
-    Ok(())
 }
 
 fn status_from_state(state: &SupporterLocalState) -> Result<SupporterStatus, String> {
@@ -857,7 +823,6 @@ fn status_from_state(state: &SupporterLocalState) -> Result<SupporterStatus, Str
         );
     }
     if state.revoked {
-        SPONSOR_OFFLINE_UNTIL.store(0, std::sync::atomic::Ordering::Release);
         return Ok(SupporterStatus {
             state: "revoked",
             ad_free: false,
@@ -906,7 +871,6 @@ fn status_from_state(state: &SupporterLocalState) -> Result<SupporterStatus, Str
     match parse_and_verify_token(token, device_public_key) {
         Ok(claims) => {
             let now = unix_time();
-            cache_verified_access(&claims, now);
             let (status, ad_free, message) = match entitlement_access_at(&claims, now) {
                 EntitlementAccess::Active => (
                     "active",

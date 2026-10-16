@@ -2,7 +2,6 @@ import { LocalizationArraysBrowserFixture } from './LocalizationArraysBrowserFix
 import {RuntimeCopyBrowserFixture} from './RuntimeCopyBrowserFixture';
 import { SupporterBrowserFixture } from './SupporterBrowserFixture';
 import { useEffect, useState } from 'react';
-import AdsterraBanner from '../shared/AdsterraBanner';
 import {useTvSpatialNavigation} from '../../hooks/useTvSpatialNavigation';
 import { AuthWizard } from '../shared/AuthWizard';
 import { FileExplorer } from '../desktop/dashboard/FileExplorer';
@@ -68,8 +67,6 @@ export default function AccessibilityFixtures() {
       <SettingsModal ownerId="101" isOpen={settingsOpen} onClose={()=>setSettingsOpen(false)} />
     </main>
   );
-
-  if (fixture === 'sponsor-mobile') return <main className="min-h-screen bg-app-canvas"><h1>Mobile sponsor placement fixture</h1><AdsterraBanner visible /></main>;
 
   if (fixture === 'locale-arrays') return <LocalizationArraysBrowserFixture />;
 
