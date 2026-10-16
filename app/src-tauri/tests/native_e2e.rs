@@ -4853,6 +4853,65 @@ fn local_search_date_window_is_frozen_across_pages_of_one_generation() {
 }
 
 #[test]
+fn weekly_quota_defaults_to_five_tb_and_enforces_combined_usage() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    let limit = 5_u64 * 1024_u64.pow(4);
+    let stats = app.ok(json!({"command":"bandwidth_read"}));
+    assert_eq!(stats["limit_bytes"], limit);
+    assert_eq!(stats["period"], "weekly");
+    app.ok(json!({"command":"bandwidth_hold","bytes":limit - 1024,"upload":true}));
+    app.ok(json!({"command":"bandwidth_commit"}));
+    app.ok(json!({"command":"bandwidth_hold","bytes":1024,"upload":false}));
+    app.ok(json!({"command":"bandwidth_commit"}));
+    assert!(app
+        .failure(json!({"command":"bandwidth_hold","bytes":1,"upload":false}))
+        .contains("limit"));
+    app.stop();
+    let mut restarted = Backend::start(&fixture.0);
+    let stats = restarted.ok(json!({"command":"bandwidth_read"}));
+    assert_eq!(stats["limit_bytes"], limit);
+    assert_eq!(stats["up_bytes"], limit - 1024);
+    assert_eq!(stats["down_bytes"], 1024);
+    restarted.stop();
+}
+
+#[test]
+fn old_default_weekly_quota_upgrades_without_resetting_saved_usage() {
+    use chrono::Datelike;
+    let today = chrono::Local::now().date_naive();
+    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    let limit = 5_u64 * 1024_u64.pow(4);
+    for explicit_limit in [false, true] {
+        let fixture = Fixture::new();
+        let mut saved = json!({"date":monday.to_string(),"up_bytes":65536,"down_bytes":32768,"period":"weekly"});
+        if explicit_limit {
+            saved["limit_bytes"] = json!(250_u64 * 1024_u64.pow(3));
+        }
+        fixture.write("bandwidth.json", saved.to_string());
+        let mut app = Backend::start(&fixture.0);
+        let stats = app.ok(json!({"command":"bandwidth_read"}));
+        assert_eq!(stats["limit_bytes"], limit);
+        assert_eq!(stats["up_bytes"], 65536);
+        assert_eq!(stats["down_bytes"], 32768);
+        assert_eq!(stats["date"], monday.to_string());
+        app.ok(json!({"command":"bandwidth_hold","bytes":251_u64 * 1024_u64.pow(3),"upload":true}));
+        app.ok(json!({"command":"bandwidth_cancel"}));
+        app.stop();
+        let mut restarted = Backend::start(&fixture.0);
+        let stats = restarted.ok(json!({"command":"bandwidth_read"}));
+        assert_eq!(stats["limit_bytes"], limit);
+        assert_eq!(stats["up_bytes"], 65536);
+        assert_eq!(stats["down_bytes"], 32768);
+        restarted.stop();
+        if explicit_limit {
+            let stored: Value = serde_json::from_slice(&fixture.read("bandwidth.json")).unwrap();
+            assert_eq!(stored["limit_bytes"], limit);
+        }
+    }
+}
+
+#[test]
 fn configurable_weekly_quota_uses_the_saved_limit_and_releases_failed_transfer_holds() {
     use chrono::Datelike;
     let fixture = Fixture::new();

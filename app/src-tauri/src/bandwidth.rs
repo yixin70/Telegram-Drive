@@ -19,7 +19,8 @@ pub struct BandwidthStats {
     pub period: String,
 }
 
-const WEEKLY_LIMIT_BYTES: u64 = 250 * 1024 * 1024 * 1024;
+const LEGACY_WEEKLY_LIMIT_BYTES: u64 = 250 * 1024 * 1024 * 1024;
+const WEEKLY_LIMIT_BYTES: u64 = 5 * 1024 * 1024 * 1024 * 1024;
 
 fn weekly_limit_bytes() -> u64 {
     WEEKLY_LIMIT_BYTES
@@ -153,12 +154,20 @@ impl BandwidthManager {
             }
             Err(error) => return Err(format!("Unable to read bandwidth accounting: {error}")),
         };
-        let stats: BandwidthStats = serde_json::from_str(&value)
+        let mut stats: BandwidthStats = serde_json::from_str(&value)
             .map_err(|error| format!("Invalid bandwidth accounting: {error}"))?;
         NaiveDate::parse_from_str(&stats.date, "%Y-%m-%d")
             .map_err(|error| format!("Invalid bandwidth accounting date: {error}"))?;
         if stats.limit_bytes == 0 || stats.up_bytes.checked_add(stats.down_bytes).is_none() {
             return Err("Invalid bandwidth accounting quota or usage".into());
+        }
+        // Upgrade the former default without discarding usage or other custom quotas.
+        // Old files do not distinguish an explicit 250 GiB choice from the default.
+        if stats.limit_bytes == LEGACY_WEEKLY_LIMIT_BYTES {
+            stats.limit_bytes = WEEKLY_LIMIT_BYTES;
+            persist_stats_atomically(path, &stats).map_err(|error| {
+                format!("Unable to upgrade the weekly bandwidth quota: {error}")
+            })?;
         }
         Ok(stats)
     }

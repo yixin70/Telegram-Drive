@@ -30,4 +30,3 @@ export function localMediaOrigin(): Promise<string> {
     });
   return pendingOrigin;
 }
-

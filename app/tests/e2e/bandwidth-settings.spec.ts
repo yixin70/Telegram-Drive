@@ -3,13 +3,15 @@ import { desktopFixture, nativeCalls, openSettings } from './desktop-fixture';
 
 test('Bandwidth controls work without VPN and upload scheduling stays off until chosen', async ({ page }) => {
   await desktopFixture(page);
-  await page.goto('/'); await openSettings(page);
+  await page.goto('/');
+  await expect(page.getByText('5 TB', { exact: true })).toBeVisible();
+  await openSettings(page);
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Advanced', exact: true }).click();
   await dialog.getByRole('button', { name: /^VPN & network/ }).click();
   await expect(dialog.getByRole('switch', { name: 'VPN Mode', exact: true })).toHaveAttribute('aria-checked', 'false');
   const quota = dialog.getByRole('spinbutton', { name: /Weekly quota/ });
-  await expect(quota).toHaveValue('250');
+  await expect(quota).toHaveValue('5120');
   await quota.fill('128'); await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.poll(async () => (await nativeCalls(page, 'cmd_set_weekly_quota')).at(-1)?.args.limitBytes).toBe(128 * 1024 ** 3);
   await expect(dialog.getByRole('slider', { name: /^Download limit/ })).toBeVisible();
@@ -29,6 +31,11 @@ test('Bandwidth controls work without VPN and upload scheduling stays off until 
   await expect(page.getByLabel('Start time')).toHaveValue('22:00');
   await page.getByRole('button', { name: 'Remove time window' }).click();
   await expect.poll(async () => (await nativeCalls(page, 'cmd_apply_vpn_settings')).at(-1)?.args.req.bandwidth_windows).toEqual([]);
+  await page.getByRole('spinbutton', { name: /Weekly quota/ }).fill('5120');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_set_weekly_quota')).at(-1)?.args.limitBytes).toBe(5 * 1024 ** 4);
+  await page.reload();
+  await expect(page.getByText('5 TB', { exact: true })).toBeVisible();
 });
 
 
@@ -41,5 +48,5 @@ test('A failed quota save remains visible and preserves the saved allowance afte
   await expect(dialog.getByRole('alert')).toBeVisible(); await expect(dialog.getByRole('button',{name:'Save',exact:true})).toBeEnabled();
   await page.reload(); await openSettings(page); dialog=page.getByRole('dialog');
   await dialog.getByRole('button',{name:'Advanced',exact:true}).click(); await dialog.getByRole('button',{name:/^VPN & network/}).click();
-  await expect(dialog.getByRole('spinbutton',{name:/Weekly quota/})).toHaveValue('250');
+  await expect(dialog.getByRole('spinbutton',{name:/Weekly quota/})).toHaveValue('5120');
 });

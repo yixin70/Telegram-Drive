@@ -1,7 +1,7 @@
 import {useTranslation} from 'react-i18next';
 import { lazy, useEffect, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Bug, Cloud, Database, Globe, HardDrive, Megaphone, Shield, Zap, Clipboard, Loader2, RefreshCw, Upload, Download } from 'lucide-react';
+import { Bug, Cloud, Database, Globe, HardDrive, Shield, Zap, Clipboard, Loader2, RefreshCw, Upload, Download } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-shell';
 import { toast } from 'sonner';
 import type { TFunction } from 'i18next';
@@ -206,7 +206,6 @@ export function PrivacySettingsTab({ crashReportingEnabled, onCrashReportingChan
           {([
             [t('privacy_destinations.device_title'), t('privacy_destinations.device_body'), Database],
             ['Telegram', t('privacy_destinations.telegram_body'), Cloud],
-            [t('privacy_destinations.sponsors_title'), t('privacy_destinations.sponsors_body'), Megaphone],
             [t('privacy_destinations.crash_title'), t('privacy_destinations.crash_body'), Bug],
           ] as const).map(([title, description, Icon]) => (
             <div key={title} className="rounded-lg border border-app-border-subtle bg-app-surface-sunken/25 p-3"><Icon className="h-4 w-4 text-app-accent" aria-hidden="true" /><strong className="mt-2 block text-xs text-app-text">{title}</strong><p className="mt-1 text-xs leading-5 text-app-text-secondary">{description}</p></div>

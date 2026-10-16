@@ -9,7 +9,7 @@ export function BandwidthWidget({ bandwidth }: BandwidthWidgetProps) {
     if (!bandwidth) return null;
 
     const totalBytes = bandwidth.up_bytes + bandwidth.down_bytes;
-    const limit = bandwidth.limit_bytes || 250 * 1024 * 1024 * 1024;
+    const limit = bandwidth.limit_bytes || 5 * 1024 ** 4;
     const percent = Math.min((totalBytes / limit) * 100, 100);
 
     return (

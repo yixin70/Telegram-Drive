@@ -16,7 +16,6 @@ export async function desktopFixture(page: Page, options: {
   gatewaySeen?: boolean;
   /** Loopback port reported by the native startup check; defaults to the preferred port. */
   streamingPort?: number;
-  sponsorPort?: number;
   /** Extra persisted application settings merged over the fixture defaults. */
   settings?: Record<string, unknown>;
   /** Base64 PDF listed as "Fixture report.pdf" and served through the preview command. */
@@ -36,8 +35,7 @@ export async function desktopFixture(page: Page, options: {
   platform?: 'windows' | 'android';
   isTelevision?: boolean;
 } = {}) {
-  await page.route(`http://localhost:${options.streamingPort ?? 14201}/**`, route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><p>Offline sponsor fixture</p>' }));
-  if (options.sponsorPort) await page.route(`http://localhost:${options.sponsorPort}/**`, route => route.fulfill({status:200,contentType:"text/html",body:"<!doctype html><p>Offline separate sponsor fixture</p>"}));
+  await page.route(`http://localhost:${options.streamingPort ?? 14201}/**`, route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><p>Offline media fixture</p>' }));
   await page.addInitScript(options => {
     const stores = JSON.parse(localStorage.getItem('desktop-e2e-stores') || 'null') ?? {
       'config.json': { api_id: options.signedOut ? undefined : '12345', foldersLastSyncedAt: Date.now(), activeFolderId: 9, ad_gateway_passed: options.gatewaySeen ?? true },
@@ -65,10 +63,10 @@ export async function desktopFixture(page: Page, options: {
         {id:'download-active',direction:'download',kind:'download',status:'downloading',filename:'Fixture download.bin',messageId:42},
         {id:'download-done',direction:'download',kind:'download',status:'completed',filename:'Fixture finished.bin',messageId:43,downloadOutcome:'saved'},
       ].map((job,index)=>({...job,ownerId:'101',folderId:9,progress:40,transferredBytes:400,totalBytes:1000,speedBytesPerSec:128,queuePosition:index,revision:1,createdAt:Date.now(),updatedAt:Date.now()})) as any[] : [] as any[]),
-      holdStartupHealth:options.holdStartupHealth??false, sponsorPort:options.sponsorPort ?? options.streamingPort ?? 14201,
+      holdStartupHealth:options.holdStartupHealth??false,
       releaseStartupHealth:()=>{state.holdStartupHealth=false;releaseStartupHealth?.();},
       searchHold:false, searchFails:false, searchPageSize:256, searchBuilding:0, searchDuplicateIds:false, releaseSearch:()=>{state.searchHold=false;releaseSearch?.();},
-      quotaSaveFails:false, weeklyQuota:Number(localStorage.getItem('desktop-e2e-weekly-quota') ?? 250 * 1024 ** 3),
+      quotaSaveFails:false, weeklyQuota:Number(localStorage.getItem('desktop-e2e-weekly-quota') ?? 5 * 1024 ** 4),
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
       holdSupporter: options.holdSupporter ?? false, supporterState: options.supporterState ?? 'active',
       supporterRefreshFails: options.supporterState === 'needs_refresh',
@@ -119,7 +117,7 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'plugin:store|save') { if (state.saveFails) throw new Error('Storage unavailable'); persist(); return; }
           if (command === 'cmd_get_settings_sync_status') return {available:true,updated_at:1_790_000_000,device_id:'other-fixture-device',current_device:false};
           if (command === 'cmd_upload_settings_sync') return {available:true,updated_at:1_790_000_001,device_id:'this-fixture-device',current_device:true};
-          if (command === 'cmd_get_startup_health') {if(state.holdStartupHealth)await startupHealthGate;return { ready: true, sponsor_port: state.sponsorPort, streaming_port: options.streamingPort ?? 14201, streaming_port_is_fallback: (options.streamingPort ?? 14201) !== 14201 };}
+          if (command === 'cmd_get_startup_health') {if(state.holdStartupHealth)await startupHealthGate;return { ready: true, streaming_port: options.streamingPort ?? 14201, streaming_port_is_fallback: (options.streamingPort ?? 14201) !== 14201 };}
           if (command === 'cmd_auth_qr_login') return 'tg://login?token=browser-fixture-only';
           if (command === 'cmd_auth_qr_poll') return { success: false };
           if (command === 'cmd_auth_request_code') return { status: 'code_required', delivery: 'telegram_app', codeLength: 5, numericCode: true };

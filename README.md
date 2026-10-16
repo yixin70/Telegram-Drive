@@ -24,6 +24,11 @@ Organize, transfer, preview, stream, sync, and share the files you keep in Saved
 
 Telegram Drive turns Telegram's familiar file storage into a focused, desktop-style workspace. The app connects directly to Telegram with credentials you provide; it does not run a separate file-storage or relay service. Every application feature is available without payment.
 
+> [!NOTE]
+> This source checkout has advertising removed: no sponsor gateway, banners, ad-provider links, or native ad-serving endpoints. All features remain free, and existing supporter activation and recovery remain compatible. The upstream release downloads linked below are unchanged and do not include these local modifications.
+
+This checkout also defaults to **5 TB per week** of combined uploads and downloads (5 TiB, or 5120 GiB in Settings), resetting Monday. Saved quotas at the old 250 GiB default are upgraded without clearing usage; other custom quotas remain unchanged. Telegram's own restrictions still apply.
+
 > [!IMPORTANT]
 > Telegram Drive is an independent project and is not affiliated with Telegram FZ-LLC. Files remain subject to Telegram's account, service, and per-file limits. Telegram Drive should not be treated as literally unlimited storage or as the only backup of important data.
 
@@ -51,7 +56,7 @@ Telegram Drive turns Telegram's familiar file storage into a focused, desktop-st
 | **Desktop integrations** | Folder Sync, local REST API, WebDAV, local share links, tray controls, and native notifications |
 | **Privacy** | Local configuration and caches, opt-in crash reporting, loopback-only local servers, and no separate file relay |
 | **Languages** | 24 selectable locales plus automatic system-language selection |
-| **Price** | Every feature is free; an optional one-time $5 supporter license removes sponsor placements for life on up to three supported devices total |
+| **Price** | Every feature is free and this source checkout has no ads; existing supporter licenses and recovery remain supported |
 
 ## Download and install
 
@@ -256,7 +261,7 @@ Locale selection and formatting are production-supported. Authentication, encryp
 
 ## Optional $5 lifetime ad-free supporter license
 
-Every Telegram Drive feature is available to non-paying users. Supported desktop and Android builds offer an optional **$5.00 USD Lifetime Ad-Free Supporter License** that removes sponsor placements on up to three supported Windows, macOS, Linux, or Android devices in total after one verified PayPal payment.
+This section describes the upstream license contract, retained for existing purchasers. No license is needed to remove ads in this modified source checkout because the advertising feature itself has been removed. Upstream supported desktop and Android builds offer an optional **$5.00 USD Lifetime Ad-Free Supporter License** that removes sponsor placements on up to three supported Windows, macOS, Linux, or Android devices in total after one verified PayPal payment. Every feature remains free.
 
 - It is a one-time purchase, **not a subscription**.
 - Existing purchasers are not required to pay again after normal application updates.

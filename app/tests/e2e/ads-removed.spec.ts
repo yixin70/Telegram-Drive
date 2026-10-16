@@ -2,22 +2,23 @@ import { expect, test } from '@playwright/test';
 import { desktopFixture, nativeCalls } from './desktop-fixture';
 
 // Exercise the real application entry point, with only native/Telegram IPC
-// simulated. Never contact the former advertising providers during this test.
+// simulated, including the platform flags (not actual Android/TV devices).
+// Never contact the former advertising providers during this test.
 for (const platform of ['desktop', 'android', 'tv'] as const) {
   for (const supporterState of ['inactive', 'expired', 'active', 'needs_refresh'] as const) {
     test(`${platform} stays ad-free for ${supporterState} accounts without a saved gateway flag`, async ({ page }) => {
       await page.clock.install();
       const adRequests: string[] = [];
-      await page.route(/effectivecpmnetwork|highperformanceformat|\/ad-(banner|script)/, route => {
-        adRequests.push(route.request().url());
-        return route.abort();
-      });
       await desktopFixture(page, {
         platform: platform === 'desktop' ? 'windows' : 'android',
         isTelevision: platform === 'tv',
         supporterState,
         gatewaySeen: false,
         settings: { supporterPromptLastShownAt: Date.now() },
+      });
+      await page.route(/effectivecpmnetwork|highperformanceformat|\/ad-(banner|script)/, route => {
+        adRequests.push(route.request().url());
+        return route.abort();
       });
       if (platform !== 'desktop') await page.setViewportSize({ width: 390, height: 844 });
       await page.goto('/');

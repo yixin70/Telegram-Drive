@@ -188,11 +188,11 @@ export default function DesignGallery() {
         <section>
           <div className="mb-3">
             <h2 className="text-sm font-semibold">Phase 5–7 surfaces</h2>
-            <p className="mt-1 text-xs text-app-text-secondary">Authentication, sponsored content, mobile sheets, and viewer controls.</p>
+            <p className="mt-1 text-xs text-app-text-secondary">Authentication, mobile sheets, and viewer controls.</p>
           </div>
           <div className="grid gap-3 lg:grid-cols-3">
             <div className="auth-glass rounded-overlay p-5">
-              <span className="sponsored-label">Secure sign in</span>
+              <span className="text-xs font-medium text-app-text-secondary">Secure sign in</span>
               <h3 className="mt-4 text-app-title font-semibold">Connect Telegram</h3>
               <p className="mt-1 text-metadata text-app-text-secondary">Credentials stay on this device.</p>
               <label className="auth-label mt-4">API ID</label>

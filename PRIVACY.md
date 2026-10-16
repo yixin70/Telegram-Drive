@@ -4,6 +4,8 @@ Last updated: August 29, 2026
 
 Telegram Drive is a local-first desktop and Android client. It does not operate a file-storage or Telegram account service and does not sell personal information. The optional supporter feature in supported desktop and Android builds uses a narrowly scoped verification service described below.
 
+> **Modified source checkout:** Advertising has been removed from this checkout. It makes no requests to advertising providers and does not display sponsor placements or open sponsor links. The sponsored-content section below describes upstream release behavior only; linked upstream downloads are not modified. Existing supporter verification and recovery remain supported.
+
 ## Data stored on your device
 
 Application settings, transfer queues, cached thumbnails and previews, local activity flags, and encrypted vault material are stored locally. Cache controls in Settings can remove cached media without deleting files stored in Telegram.
