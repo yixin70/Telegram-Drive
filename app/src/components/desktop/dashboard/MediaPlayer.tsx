@@ -92,7 +92,7 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
             if (!cancelled) setStreamInfo(info);
         }).catch(() => {});
         return () => { cancelled = true; };
-    }, [localPath]);
+    }, [localPath, ownerId, sourceFolder, file.id]);
 
     const folderIdParam = sourceFolder !== null ? sourceFolder.toString() : 'home';
     const streamCredential = streamInfo?.operation_token
@@ -105,11 +105,15 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
     const isVideo = isVideoFile(file.name);
     const isAudio = isAudioFile(file.name);
     const isMp4 = isMp4Video(file.name);
+    // Protected originals (including multipart) use the authenticated range
+    // route. Remux/transcoding intentionally cannot consume protected objects.
+    const protectedMedia = (file.encryption?.state ?? file.encryption_state ?? 'plain') !== 'plain';
+    const adaptive = isMp4 && !protectedMedia && !localPath;
 
     useEffect(() => {
         // The adaptive child owns its own controls. Keeping this listener alive
         // while it is mounted toggles playback twice for a single keypress.
-        if (isMp4 && streamUrl && !localPath) return;
+        if (adaptive && streamUrl) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (!shouldHandleMediaShortcut(e)) return;
 
@@ -156,10 +160,10 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isMp4, streamUrl, localPath, onClose, onNext, onPrev, toggleFullscreen]);
+    }, [adaptive, streamUrl, onClose, onNext, onPrev, toggleFullscreen]);
 
-    // MP4 files: use adaptive streaming with quality controls + throttling
-    if (isMp4 && streamUrl && !localPath) {
+    // Unprotected remote MP4 files retain adaptive quality controls.
+    if (adaptive && streamUrl) {
         return (
             <AdaptiveMediaPlayer
                 file={file}

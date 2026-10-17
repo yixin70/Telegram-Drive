@@ -29,7 +29,7 @@ Telegram Drive turns Telegram's familiar file storage into a focused, desktop-st
 
 This checkout also defaults to **5 TB per week** of combined uploads and downloads (5 TiB, or 5120 GiB in Settings), resetting Monday. Saved quotas at the old 250 GiB default are upgraded without clearing usage; other custom quotas remain unchanged. Telegram's own restrictions still apply.
 
-Large local files now use automatic multipart upload and verified download reassembly, including vault/password encryption. Existing TDENC2 files remain unchanged. Use this version to download multipart files; older clients and raw streaming/share/API paths cannot reassemble them. See [multipart behavior, recovery and limitations](Docs/MULTIPART.md). Live multi-GB Telegram acceptance is not covered by the local transport fixtures.
+Large local files now use automatic multipart upload and verified download reassembly, including vault/password encryption. Existing TDENC2 files remain unchanged. Vault-backed multipart audio/video also supports original-quality desktop streaming and seeking while unlocked; passphrase-only preview, transcoding, and raw share/API paths remain unsupported. Older clients cannot reassemble multipart files. See [multipart behavior, recovery and limitations](Docs/MULTIPART.md). Live multi-GB Telegram acceptance is not covered by the local transport fixtures.
 
 > [!IMPORTANT]
 > Telegram Drive is an independent project and is not affiliated with Telegram FZ-LLC. Files remain subject to Telegram's account, service, and per-file limits. Telegram Drive should not be treated as literally unlimited storage or as the only backup of important data.

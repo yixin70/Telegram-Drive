@@ -24,6 +24,7 @@ export async function desktopFixture(page: Page, options: {
   heicJpegBase64?: string;
   heicDecoderMissing?: boolean;
   video?: boolean;
+  protectedVideo?: boolean;
   extraPhoto?: boolean;
   holdThumbnails?: boolean;
   encryptionReady?: boolean;
@@ -86,7 +87,9 @@ export async function desktopFixture(page: Page, options: {
     const file = (id: number, folder: number | null, owner = state.owner) => ({
       id, folder_id: folder, ownerId: owner, name: `${owner === '101' ? 'Holiday' : 'Work'} ${folder === null ? 'saved' : 'folder'} ${options.heicBase64 ? 'photo.HEIC' : options.video ? 'video.mp4' : 'photo.jpg'}`,
       size: 1024, mime_type: options.heicBase64 ? 'image/heic' : options.video ? 'video/mp4' : 'image/jpeg', file_ext: options.heicBase64 ? 'heic' : options.video ? 'mp4' : 'jpg', created_at: '2026-09-07T12:00:00Z', folderName: folder === null ? 'Saved Messages' : 'Photos',
-      encryption_state: 'plain', is_favorite: false, type: 'image',
+      encryption_state: options.protectedVideo ? 'encrypted_unlocked' : 'plain',
+      ...(options.protectedVideo ? { encryption: { state: 'encrypted_unlocked', protection_mode: 'vault', metadata_protected: true } } : {}),
+      is_favorite: false, type: 'image',
     });
     const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#284b63"/><circle cx="320" cy="240" r="150" fill="#98d8ea"/></svg>')}`;
     const status = () => ({
@@ -193,7 +196,7 @@ export async function desktopFixture(page: Page, options: {
           }
           if (command === 'cmd_get_preview' && options.heicBase64) return `data:image/heic;base64,${options.heicBase64}`;
           if (command === 'cmd_get_preview' && args.messageId === 77 && options.pdfBase64) return `data:application/pdf;base64,${options.pdfBase64}`;
-          if (command === 'cmd_get_stream_info') return { token: 'browser-fixture-token', base_url: `http://localhost:${options.streamingPort ?? 14201}`, operation_token: null };
+          if (command === 'cmd_get_stream_info') return { token: 'browser-fixture-token', base_url: `http://localhost:${options.streamingPort ?? 14201}`, operation_token: options.protectedVideo ? '9007199254740993' : null };
           if (command === 'cmd_get_thumbnail' && options.video) {
             const owner = state.owner;
             const color = owner === '101' ? state.thumbnailVersion === 0 ? '#284b63' : '#bb8844' : '#994488';

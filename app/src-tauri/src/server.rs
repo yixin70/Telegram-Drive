@@ -657,12 +657,101 @@ where
         .streaming(stream)
 }
 
+#[derive(Clone)]
 pub(crate) struct ProtectedStreamAccess {
     pub bandwidth: Arc<crate::bandwidth::BandwidthManager>,
     pub network: Arc<crate::vpn_optimizer::NetworkConfig>,
     pub account: crate::workspace::AccountGuard,
     pub state: crate::crypto::state::CryptoState,
     pub credential: u64,
+}
+
+impl ProtectedStreamAccess {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        self.account.validate()?;
+        self.state
+            .validate_operation(
+                self.credential,
+                crate::crypto::state::OperationClass::MediaStream,
+            )
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub(crate) async fn build_multipart_media_response<T: crate::multipart::Transport + 'static>(
+    req: &actix_web::HttpRequest,
+    transport: T,
+    message: i32,
+    folder: Option<i64>,
+    access: ProtectedStreamAccess,
+) -> HttpResponse {
+    use crate::multipart::{preview, Credentials};
+    use futures::StreamExt;
+    let key = match access.state.operation_wrapping_key(
+        access.credential,
+        crate::crypto::state::OperationClass::MediaStream,
+    ) {
+        Ok(key) => key,
+        Err(_) => {
+            return HttpResponse::Locked().body("Unlock the vault before streaming protected media")
+        }
+    };
+    let manifest = match preview::authorized(
+        &access,
+        crate::multipart::read_manifest(
+            &transport,
+            message,
+            folder,
+            &Credentials {
+                mode: "auto",
+                vault: Some(&key),
+                passphrase: None,
+            },
+        ),
+    )
+    .await
+    {
+        Ok(manifest) => manifest,
+        Err(error) => return HttpResponse::Conflict().body(error),
+    };
+    if !matches!(manifest.mode.as_str(), "vault" | "vault_and_passphrase") {
+        return HttpResponse::Conflict().body("Multipart preview requires vault-protected media");
+    }
+    let size = manifest.length;
+    let (start, end, partial) = match select_range(req, size) {
+        RangeSelection::Full => (0, size.saturating_sub(1), false),
+        RangeSelection::Partial(start, end) => (start, end, true),
+        RangeSelection::Unsatisfiable => return unsatisfiable_range(size),
+    };
+    if size == 0 {
+        return HttpResponse::UnprocessableEntity().body("Encrypted media is empty");
+    }
+    let hold = match crate::bandwidth::BandwidthReservation::download(
+        access.bandwidth.clone(),
+        end - start + 1,
+    ) {
+        Ok(hold) => hold,
+        Err(error) => return HttpResponse::TooManyRequests().body(error),
+    };
+    let mime = manifest.mime.clone();
+    let stream = preview::chunks(transport, manifest, key, start, end, access.clone())
+        .map(|result| result.map_err(actix_web::error::ErrorUnprocessableEntity));
+    let stream = guard_protected_chunks(stream, access);
+    let stream = quota_media_chunks(stream, hold, end - start + 1);
+    let mut response = if partial {
+        HttpResponse::PartialContent()
+    } else {
+        HttpResponse::Ok()
+    };
+    if partial {
+        response.insert_header(("Content-Range", format!("bytes {start}-{end}/{size}")));
+    }
+    response
+        .insert_header(("Content-Type", mime))
+        .insert_header(("Accept-Ranges", "bytes"))
+        .insert_header(("Content-Length", (end - start + 1).to_string()))
+        .insert_header(("Cache-Control", "no-store"))
+        .streaming(stream)
 }
 
 fn guard_protected_chunks<S>(
@@ -761,6 +850,66 @@ async fn stream_media(
     let Some(media) = message.media() else {
         return HttpResponse::NotFound().body("Media not found");
     };
+    if crate::multipart::is_manifest(message.text()) {
+        let Some(credential) = query.credential else {
+            return HttpResponse::Locked()
+                .body("Unlock the vault before streaming protected media");
+        };
+        if crypto_state
+            .validate_operation(
+                credential,
+                crate::crypto::state::OperationClass::MediaStream,
+            )
+            .is_err()
+        {
+            return HttpResponse::Locked()
+                .body("The protected-media credential expired; unlock and retry");
+        }
+        let peer = match resolve_peer(&client, folder_id, &data.peer_cache).await {
+            Ok(peer) => peer,
+            Err(_) => return HttpResponse::NotFound().finish(),
+        };
+        let bandwidth = req
+            .app_data::<web::Data<Arc<crate::bandwidth::BandwidthManager>>>()
+            .expect("Shared bandwidth accounting")
+            .get_ref()
+            .clone();
+        let network = req
+            .app_data::<web::Data<Arc<crate::vpn_optimizer::NetworkConfig>>>()
+            .expect("Shared network state")
+            .get_ref()
+            .clone();
+        let transport = crate::multipart::telegram::Telegram {
+            account: account.clone(),
+            client,
+            peer,
+            folder: folder_id,
+            bandwidth: bandwidth.clone(),
+            network: network.clone(),
+            crypto: None,
+            session: None,
+            cancelled: None,
+            app: None,
+            transfer: String::new(),
+            upload: false,
+            source: None,
+            total: std::sync::atomic::AtomicU64::new(0),
+        };
+        return build_multipart_media_response(
+            &req,
+            transport,
+            message_id,
+            folder_id,
+            ProtectedStreamAccess {
+                bandwidth,
+                network,
+                account,
+                state: crypto_state.get_ref().clone(),
+                credential,
+            },
+        )
+        .await;
+    }
     let record = match encrypted_stream_record(
         &account,
         &client,

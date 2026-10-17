@@ -2,6 +2,9 @@
 //!
 //! The protocol drives production storage, crypto and loopback HTTP services.
 //! It does not simulate a Tauri window or claim authenticated Telegram coverage.
+#[cfg(windows)]
+pub mod ipc;
+
 use crate::commands::{download_destination, TelegramState};
 use crate::crypto::{
     self,
@@ -55,11 +58,11 @@ struct FixtureSink {
     saved: std::sync::Mutex<Vec<i32>>,
 }
 
-struct MultipartFixture<'a> {
+struct MultipartFixture {
     folder: Option<i64>,
     account: AccountGuard,
     bandwidth: Arc<crate::bandwidth::BandwidthManager>,
-    crypto: &'a CryptoState,
+    crypto: CryptoState,
     session: Option<u64>,
     fail_after: Option<usize>,
     saved: std::sync::atomic::AtomicUsize,
@@ -68,7 +71,7 @@ struct MultipartFixture<'a> {
     progress: std::sync::Mutex<Vec<(u64, u64)>>,
 }
 
-impl MultipartFixture<'_> {
+impl MultipartFixture {
     fn directory(&self) -> Result<PathBuf, String> {
         self.account.validate()?;
         let path = self.account.root.join(format!(
@@ -94,7 +97,7 @@ impl MultipartFixture<'_> {
     }
 }
 
-impl crate::multipart::Transport for MultipartFixture<'_> {
+impl crate::multipart::Transport for MultipartFixture {
     fn account(&self) -> &AccountGuard {
         &self.account
     }
@@ -210,6 +213,26 @@ impl crate::multipart::Transport for MultipartFixture<'_> {
     async fn lookup(&self, id: i32) -> Result<Option<crate::multipart::Remote>, String> {
         self.check()?;
         Ok(self.documents()?.into_iter().find(|remote| remote.id == id))
+    }
+    async fn open_range(
+        &self,
+        id: i32,
+        offset: u64,
+    ) -> Result<(crate::multipart::Remote, crate::multipart::Reader), String> {
+        use tokio::io::AsyncSeekExt;
+        self.check()?;
+        let directory = self.directory()?;
+        let remote = serde_json::from_slice(
+            &std::fs::read(directory.join(format!("{id}.json"))).map_err(error)?,
+        )
+        .map_err(error)?;
+        let mut file = tokio::fs::File::open(directory.join(format!("{id}.bin")))
+            .await
+            .map_err(error)?;
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(error)?;
+        Ok((remote, Box::new(file)))
     }
     async fn find(&self, caption: &str) -> Result<Option<crate::multipart::Remote>, String> {
         self.check()?;
@@ -423,6 +446,8 @@ struct MediaFixtureQuery {
     delay_ms: u64,
     #[serde(default)]
     protected: bool,
+    #[serde(default)]
+    multipart: bool,
     credential: Option<u64>,
     #[serde(default)]
     resolve_failure: bool,
@@ -442,6 +467,38 @@ async fn fixture_media(
         Ok(account) => account,
         Err(_) => return actix_web::HttpResponse::NotFound().finish(),
     };
+    if query.multipart {
+        let Some(credential) = query.credential else {
+            return actix_web::HttpResponse::Locked().finish();
+        };
+        let access = crate::server::ProtectedStreamAccess {
+            bandwidth: fixture.bandwidth.clone(),
+            network: fixture.network.clone(),
+            account: account.clone(),
+            state: crypto.get_ref().clone(),
+            credential,
+        };
+        let transport = MultipartFixture {
+            folder: Some(4242),
+            account,
+            bandwidth: fixture.bandwidth.clone(),
+            crypto: crypto.get_ref().clone(),
+            session: crypto.current_session(),
+            fail_after: None,
+            saved: Default::default(),
+            stop_on_progress: None,
+            stopped: Default::default(),
+            progress: Default::default(),
+        };
+        return crate::server::build_multipart_media_response(
+            &request,
+            transport,
+            query.message_id,
+            Some(4242),
+            access,
+        )
+        .await;
+    }
     let source = match fixture
         .cache
         .resolve(&account, (None, query.message_id), || async {
@@ -5194,7 +5251,7 @@ impl Driver {
             folder,
             account: AccountGuard::open(&self.root, None)?,
             bandwidth: self.bandwidth.clone(),
-            crypto: &self.crypto,
+            crypto: self.crypto.clone(),
             session: credential.as_ref().map(|(id, _)| *id),
             fail_after: request["failAfter"].as_u64().map(|n| n as usize),
             saved: Default::default(),
@@ -5271,7 +5328,7 @@ impl Driver {
                     folder: target_folder,
                     account: transport.account.clone(),
                     bandwidth: self.bandwidth.clone(),
-                    crypto: &self.crypto,
+                    crypto: self.crypto.clone(),
                     session: transport.session,
                     fail_after: transport.fail_after,
                     saved: Default::default(),

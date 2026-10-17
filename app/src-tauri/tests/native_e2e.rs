@@ -68,6 +68,10 @@ impl Backend {
         if root.join(".video-upload-helper-path").exists() {
             command.env("PATH", root.join("video-upload-codec"));
         }
+        #[cfg(windows)]
+        if root.join(".ipc-stack-fixture").exists() {
+            command.arg("--ipc-stack");
+        }
         let mut child = command
             .arg(root)
             .stdin(Stdio::piped())
@@ -177,6 +181,37 @@ impl Drop for Backend {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[test]
+#[cfg(windows)]
+fn native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack() {
+    let fixture = Fixture::new();
+    fixture.write(".ipc-stack-fixture", b"isolated Wry IPC\n");
+    let mut app = Backend::start(&fixture.0);
+    for _ in 0..3 {
+        let folders = app.request(json!({"command":"cmd_scan_folders", "payload":{}}));
+        if cfg!(debug_assertions) {
+            assert_eq!(folders, json!({"ok":true,"value":[]}));
+        } else {
+            assert_eq!(folders, json!({"ok":false,"error":"Client not connected"}));
+        }
+        assert_eq!(
+            app.ok(json!({"command":"cmd_get_encryption_settings", "payload":{}}))["default_mode"],
+            "standard"
+        );
+        // Exercise the real asynchronous argument/error path used after refresh.
+        assert!(app
+            .failure(json!({"command":"cmd_get_files", "payload":{"folderId":"invalid"}}))
+            .contains("folderId"));
+        assert!(app
+            .failure(json!({"command":"cmd_update_encryption_settings", "payload":{}}))
+            .contains("invalid args"));
+        assert!(app
+            .failure(json!({"command":"not_a_command", "payload":{}}))
+            .contains("not found"));
+    }
+    app.stop();
 }
 
 #[test]
@@ -2581,6 +2616,231 @@ async fn protected_media_http_delivers_full_and_seeked_authenticated_content_wit
     app.ok(json!({"command":"vault_lock"}));
     assert!(response.bytes().await.is_err());
     assert_eq!(client.get(&url).send().await.unwrap().status(), 423);
+    app.stop();
+}
+
+#[tokio::test]
+async fn multipart_media_http_seeks_across_authenticated_pieces_and_revokes_access() {
+    let fixture = Fixture::new();
+    let content: Vec<u8> = (0..6_400_123).map(|i| (i % 251) as u8).collect();
+    fixture.write("movie.mp4", &content);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.ok(json!({"command":"vault_create", "passphrase":"private fixture passphrase"}));
+    let upload = app.ok(json!({"command":"multipart_upload", "source":"movie.mp4",
+        "mode":"vault", "objectLimit":2_400_000}));
+    let manifest = app.ok(json!({"command":"multipart_inspect", "message":upload["message"]}));
+    let boundary = manifest["parts"][0]["length"].as_u64().unwrap() as usize;
+    let started = app
+        .ok(json!({"command":"start_media_fixture", "source":"movie.mp4", "filename":"movie.mp4"}));
+    let url = format!(
+        "{}&multipart=true&messageId={}&credential={}",
+        started["url"].as_str().unwrap(),
+        upload["message"],
+        started["credential"].as_str().unwrap()
+    );
+    let client = reqwest::Client::new();
+    let unauthenticated = format!(
+        "{}&multipart=true&messageId={}",
+        started["url"].as_str().unwrap(),
+        upload["message"]
+    );
+    assert_eq!(
+        client.get(&unauthenticated).send().await.unwrap().status(),
+        423
+    );
+    assert_eq!(
+        client
+            .get(format!("{unauthenticated}&credential=0"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        423
+    );
+    for (range, start, end) in [
+        (
+            "bytes=-23".to_string(),
+            content.len() - 23,
+            content.len() - 1,
+        ),
+        (
+            format!("bytes={}-{}", boundary - 17, boundary + 37),
+            boundary - 17,
+            boundary + 37,
+        ),
+        ("bytes=1048567-2097167".to_string(), 1048567, 2097167),
+    ] {
+        let response = client
+            .get(&url)
+            .header("Range", &range)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206, "{range}");
+        assert_eq!(
+            response.headers()["content-range"],
+            format!("bytes {start}-{end}/{}", content.len())
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(
+            response.bytes().await.unwrap().as_ref(),
+            &content[start..=end]
+        );
+    }
+    let response = client.get(&url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.bytes().await.unwrap().as_ref(), content.as_slice());
+    let response = client
+        .get(&url)
+        .header("Range", "bytes=99999999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 416);
+    assert_eq!(
+        response.headers()["content-range"],
+        format!("bytes */{}", content.len())
+    );
+
+    // A requested corrupt chunk cannot be delivered as successful plaintext.
+    let first_id = manifest["parts"][0]["remote"]["id"].as_i64().unwrap();
+    let part_path = format!("multipart-remote-101-4242/{first_id}.bin");
+    let original = fixture.read(&part_path);
+    let mut corrupted = original.clone();
+    corrupted[1_100_000] ^= 0x80;
+    fixture.write(&part_path, corrupted);
+    if let Ok(response) = client
+        .get(&url)
+        .header("Range", "bytes=1099999-1100099")
+        .send()
+        .await
+    {
+        assert!(response.bytes().await.is_err());
+    }
+    // Unrelated seeks do not reconstruct or read the damaged earlier piece.
+    let response = client
+        .get(&url)
+        .header("Range", "bytes=-23")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        &content[content.len() - 23..]
+    );
+    fixture.write(&part_path, &original);
+    // A different valid envelope must not be accepted under this piece's
+    // authenticated reference, even if its document metadata is unchanged.
+    let second_id = manifest["parts"][1]["remote"]["id"].as_i64().unwrap();
+    fixture.write(
+        &part_path,
+        fixture.read(&format!("multipart-remote-101-4242/{second_id}.bin")),
+    );
+    if let Ok(response) = client.get(&url).header("Range", "bytes=0-31").send().await {
+        assert!(response.bytes().await.is_err());
+    }
+    fixture.write(&part_path, &original[..512]);
+    if let Ok(response) = client.get(&url).header("Range", "bytes=0-31").send().await {
+        assert!(response.bytes().await.is_err());
+    }
+    fixture.write(&part_path, &original);
+    // Complete reads verify the final digest, while a seek authenticates only
+    // its selected data records and does not require an unrelated footer.
+    let mut corrupt_footer = original.clone();
+    *corrupt_footer.last_mut().unwrap() ^= 1;
+    fixture.write(&part_path, corrupt_footer);
+    if let Ok(response) = client.get(&url).send().await {
+        assert!(response.bytes().await.is_err());
+    }
+    let response = client
+        .get(&url)
+        .header("Range", "bytes=0-31")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.bytes().await.unwrap().as_ref(), &content[..32]);
+    fixture.write(&part_path, &original);
+    app.ok(json!({"command":"traffic_configure", "vpn":false, "downKbs":256}));
+    let mut active = client.get(&url).send().await.unwrap();
+    assert!(!active.chunk().await.unwrap().unwrap().is_empty());
+    app.ok(json!({"command":"vault_lock"}));
+    assert!(
+        active.bytes().await.is_err(),
+        "Lock must stop in-flight multipart playback"
+    );
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 423);
+    app.ok(json!({"command":"vault_unlock", "passphrase":"private fixture passphrase"}));
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        423,
+        "Unlock must not revive an old credential"
+    );
+    let restarted = app
+        .ok(json!({"command":"start_media_fixture", "source":"movie.mp4", "filename":"movie.mp4"}));
+    let fresh_url = format!(
+        "{}&multipart=true&messageId={}&credential={}",
+        restarted["url"].as_str().unwrap(),
+        upload["message"],
+        restarted["credential"].as_str().unwrap()
+    );
+    let mut active = client.get(&fresh_url).send().await.unwrap();
+    assert!(!active.chunk().await.unwrap().unwrap().is_empty());
+    app.ok(json!({"command":"seed_account", "owner":202}));
+    assert!(
+        active.bytes().await.is_err(),
+        "Account switch must revoke in-flight multipart media"
+    );
+    assert_eq!(client.get(&fresh_url).send().await.unwrap().status(), 404);
+    app.stop();
+}
+
+#[tokio::test]
+async fn multipart_media_http_uses_the_vault_slot_and_keeps_unsupported_modes_closed() {
+    let fixture = Fixture::new();
+    let content = synthetic_bytes(2_500_000, 17);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.ok(json!({"command":"vault_create", "passphrase":"fixture vault"}));
+    let client = reqwest::Client::new();
+    for mode in ["vault_and_passphrase", "passphrase", "standard"] {
+        let source = format!("{mode}.mp4");
+        fixture.write(&source, &content);
+        let upload = app.ok(json!({"command":"multipart_upload", "source":source,
+            "mode":mode, "filePassphrase":"fixture file secret", "objectLimit":1_400_000}));
+        let started =
+            app.ok(json!({"command":"start_media_fixture", "source":source, "filename":source}));
+        let url = format!(
+            "{}&multipart=true&messageId={}&credential={}",
+            started["url"].as_str().unwrap(),
+            upload["message"],
+            started["credential"].as_str().unwrap()
+        );
+        let response = client
+            .get(&url)
+            .header("Range", "bytes=-33")
+            .send()
+            .await
+            .unwrap();
+        if mode == "vault_and_passphrase" {
+            assert_eq!(response.status(), 206);
+            assert_eq!(
+                response.bytes().await.unwrap().as_ref(),
+                &content[content.len() - 33..]
+            );
+            let manifest_path = format!("multipart-remote-101-4242/{}.bin", upload["message"]);
+            let mut corrupted = fixture.read(&manifest_path);
+            *corrupted.last_mut().unwrap() ^= 1;
+            fixture.write(&manifest_path, corrupted);
+            assert_eq!(
+                client.get(&url).send().await.unwrap().status(),
+                409,
+                "Unauthenticated manifest must not select media bytes"
+            );
+        } else {
+            assert_eq!(response.status(), 409, "{mode} preview remains unsupported");
+        }
+    }
     app.stop();
 }
 
@@ -5929,7 +6189,8 @@ fn multipart_full_set_moves_and_interrupted_deletes_recover_in_every_mode() {
         app.ok(json!({"command":"seed_account","owner":101}));
         app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
         let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
-        assert!(app.failure(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password","failAfter":1})).contains("fixture interruption"));
+        let interrupted = app.failure(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password","failAfter":1}));
+        assert!(interrupted.contains("fixture interruption"));
         app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"original.bin","filePassphrase":"fixture file password"}));
         assert_eq!(fixture.read("original.bin"), bytes);
         let moved = app.ok(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password"}));

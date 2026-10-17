@@ -72,7 +72,13 @@ Failure, retry, cancellation, account changes, source replacement, quota holds a
 
 ### What the native journeys do not reach
 
-The native driver has no Telegram connection and no Tauri window. These limits apply to the journeys above:
+The usual native driver has no Telegram connection and no Tauri window. A Windows-only IPC stack journey uses a separate hidden Wry window, an isolated application identifier and fixture-owned WebView data. Minimal fixture JavaScript invokes the production command dispatcher through the real WebView/event loop on the Windows UI thread's 1 MiB stack: repeated folder refresh, successful non-secret settings reads, argument failures and unknown-command replies. It uses a disconnected Telegram boundary and does not load the real frontend, run production setup, access the personal profile/keyring or establish live Telegram scanning. The host runner also runs this journey with `--release`, because optimized dispatch inlining can overflow where a debug build passes:
+
+```sh
+cargo test --release --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack
+```
+
+These limits apply to the other native journeys above:
 
 - **Folder scanning.** A process journey pauses a controlled dialog source while reading the production peer-cache publication path, then covers successful replacement, interrupted enumeration and an account switch before publication. Real Telegram dialogs and legacy About lookups still require installed-app acceptance.
 - **Streaming.** Disk-backed download fixtures exercise the production HTTP builders over real loopback HTTP: exact suffix/open-ended/CDN-boundary ranges, empty plain files, `416` resource sizes, UTF-8 and hostile download names, source errors, premature EOF, account revocation, and full/seeked protected reads beyond 4 MiB. Protected journeys reject corrupted or missing data/final records, stop on an in-flight vault lock, and retain independently authenticated range access when the final record is unavailable. The production resolution-cache path covers concurrent seeks, retry after a failed lookup, account/session invalidation, expiry, capacity eviction and a lookup completing after an account switch. These sources replace Telegram downloads and peer/message lookup; real Telegram CDN behaviour, file-reference expiry and playback in WebView2, WKWebView, WebKitGTK and Android WebView remain unverified. Empty protected media retains its existing full-read refusal.

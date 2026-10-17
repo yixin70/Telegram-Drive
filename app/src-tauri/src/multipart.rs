@@ -2,6 +2,7 @@
 //! object is an independent, ordinary TDENC2 envelope. The manifest is the only
 //! commit point; neither journals nor filenames are needed to read a remote set.
 pub(crate) mod operations;
+pub(crate) mod preview;
 pub(crate) mod recovery;
 pub(crate) mod telegram;
 use crate::bandwidth::{BandwidthManager, BandwidthReservation};
@@ -68,6 +69,14 @@ pub(crate) trait Transport: Sync {
         header: Option<&[u8]>,
     ) -> impl std::future::Future<Output = Result<Remote>> + Send;
     fn open(&self, id: i32) -> impl std::future::Future<Output = Result<(Remote, Reader)>> + Send;
+    /// Preview reader starts at the exact byte offset (not a CDN boundary).
+    /// The caller must enforce protected-operation revocation, output pacing
+    /// and quota; this transport read is intentionally not paced a second time.
+    fn open_range(
+        &self,
+        id: i32,
+        offset: u64,
+    ) -> impl std::future::Future<Output = Result<(Remote, Reader)>> + Send;
     fn lookup(&self, id: i32) -> impl std::future::Future<Output = Result<Option<Remote>>> + Send;
     fn find(
         &self,

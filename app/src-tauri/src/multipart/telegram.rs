@@ -360,10 +360,46 @@ impl Transport for Telegram<'_> {
         Ok(found)
     }
     async fn open(&self, id: i32) -> Result<(Remote, Reader)> {
+        self.reader(id, 0, true).await
+    }
+    async fn open_range(&self, id: i32, offset: u64) -> Result<(Remote, Reader)> {
+        // Preview pacing is applied to authenticated bytes at the HTTP output,
+        // just like single-envelope media. Do not pace the same bytes twice.
+        self.reader(id, offset, false).await
+    }
+    async fn lookup(&self, id: i32) -> Result<Option<Remote>> {
+        self.check()?;
+        self.account.validate_client(&self.client).await?;
+        let message = self
+            .client
+            .get_messages_by_id(&self.peer, &[id])
+            .await
+            .map_err(crate::commands::utils::map_error)?
+            .into_iter()
+            .flatten()
+            .next();
+        self.check()?;
+        message.as_ref().map(remote).transpose()
+    }
+}
+
+impl Telegram<'_> {
+    async fn reader(&self, id: i32, offset: u64, paced: bool) -> Result<(Remote, Reader)> {
         let message = self.message(id).await?;
         let object = remote(&message)?;
+        if offset > object.size {
+            return Err(err("Seek exceeds document length"));
+        }
         let media = message.media().ok_or_else(|| err("Missing document"))?;
+        // Keep the SDK's normal batching for full downloads. Only protected
+        // preview seeks need the stream route's smaller aligned chunks.
         let mut download = self.client.iter_download(&media);
+        if offset != 0 || !paced {
+            download = download
+                .chunk_size(65_536)
+                .skip_chunks((offset / 524_288 * 8) as i32);
+        }
+        let mut skip = (offset % 524_288) as usize;
         let traffic = self.traffic(Direction::Download);
         let (reader, mut writer) = tokio::io::duplex(256 * 1024);
         let failed = Arc::new(Mutex::new(None));
@@ -371,8 +407,16 @@ impl Transport for Telegram<'_> {
         let task = tokio::spawn(async move {
             let outcome: Result<()> = async {
                 while let Some(bytes) = download.next().await.map_err(err)? {
-                    traffic.wait(bytes.len()).await?;
-                    writer.write_all(&bytes).await.map_err(err)?;
+                    let ignored = skip.min(bytes.len());
+                    skip -= ignored;
+                    let bytes = &bytes[ignored..];
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    if paced {
+                        traffic.wait(bytes.len()).await?;
+                    }
+                    writer.write_all(bytes).await.map_err(err)?;
                 }
                 Ok(())
             }
@@ -390,20 +434,6 @@ impl Transport for Telegram<'_> {
                 task,
             }),
         ))
-    }
-    async fn lookup(&self, id: i32) -> Result<Option<Remote>> {
-        self.check()?;
-        self.account.validate_client(&self.client).await?;
-        let message = self
-            .client
-            .get_messages_by_id(&self.peer, &[id])
-            .await
-            .map_err(crate::commands::utils::map_error)?
-            .into_iter()
-            .flatten()
-            .next();
-        self.check()?;
-        message.as_ref().map(remote).transpose()
     }
 }
 

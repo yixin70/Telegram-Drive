@@ -12,6 +12,10 @@ const suites = [
   [npm, ['run', 'test:e2e', '--prefix', 'app']],
   [npm, ['run', 'test:e2e', '--prefix', 'supporter-service']],
   ['cargo', ['test', '--locked', '--manifest-path', 'app/src-tauri/Cargo.toml', '--features', 'native-e2e', '--test', 'native_e2e']],
+  // Optimizer inlining can exhaust the Windows IPC stack only in release builds.
+  ...(process.platform === 'win32' ? [
+    ['cargo', ['test', '--release', '--locked', '--manifest-path', 'app/src-tauri/Cargo.toml', '--features', 'native-e2e', '--test', 'native_e2e', 'native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack']],
+  ] : []),
   // Worker and application together: needs both suites' toolchains.
   [process.execPath, ['--test', 'scripts/e2e/supporter-token.e2e.mjs']],
 ];

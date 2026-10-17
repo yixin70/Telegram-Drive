@@ -91,12 +91,40 @@ Local-file upload/download is the supported initial journey. URL/temp-file impor
 that reach the common upload implementation use the same transport; their existing
 download/import size limits still apply. Archive upload retains its existing input
 limits. Folder Sync rejects oversized uploads and skips multipart remote entries.
-REST and WebDAV listing intentionally omit these containers; raw serving, preview,
-streaming/transcoding, archive extraction/download, sharing, offline-pack reads and
+REST and WebDAV listing intentionally omit these containers; raw serving,
+transcoding/remux, archive extraction/download, sharing, offline-pack reads and
 unsupported mutations reject them instead of returning manifest or piece bytes.
-Download the logical file through the desktop file download action before previewing
-or exporting it. Android multipart download publication is explicitly unsupported
+Android multipart download publication is explicitly unsupported
 in this implementation; no Android device build or coverage is claimed.
+
+### Original-quality protected media preview
+
+The desktop media player can stream vault-backed multipart audio/video through
+the authenticated loopback `/stream` route while the vault is unlocked (including
+vault-and-passphrase files opened with their vault slot). MP4 uses the original
+media rather than the unsupported remux/transcoding routes. Codec support still
+depends on the WebView; this does not add transcoding. Standard and passphrase-only
+multipart preview, thumbnails and other preview consumers remain unsupported;
+download the logical file before opening those.
+
+Each request authenticates the bounded manifest in its account/folder scope and
+maps HTTP plaintext ranges across pieces. It checks referenced document identity,
+envelope UUID, protection mode and length, and authenticates every returned TDENC2
+record before delivery. Seeks fetch only the necessary records (plus bounded
+header/CDN read-ahead); they do not stage a full plaintext file. Memory stays bounded
+by a crypto record and bounded transport/output buffers, not the logical file size.
+Responses use `Cache-Control: no-store`; credentials remain operation-scoped and
+vault lock/account changes revoke in-flight requests and future seeks. Loopback
+tokens, including operation credentials, must not be shared or logged.
+
+A range does **not** verify unread content or claim the whole-file digest matched.
+Whenever a complete piece is read, its final record, exact ciphertext length and
+transport digest are checked before its last plaintext record is released. A full
+logical read also verifies the whole-file digest before releasing its final bytes.
+Errors truncate the response rather than delivering unauthenticated bytes. Already
+delivered authenticated bytes cannot be recalled, and locking cannot erase bytes
+already buffered by the player. HTTP quota/pacing applies to delivered plaintext;
+manifest reads retain their existing separate accounting.
 
 ## Validation boundary
 
