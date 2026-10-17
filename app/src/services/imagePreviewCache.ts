@@ -16,8 +16,8 @@ const measurementQueue: Array<() => void> = [];
 
 export const getImageCacheKey = (fileId: number, folderId?: number | null): string =>
     JSON.stringify([owner, folderId ?? 'home', fileId]);
-const keyFor = (variant: Variant, fileId: number, folderId?: number | null, vaultSession?: number) =>
-    `${variant}:${getImageCacheKey(fileId, folderId)}${vaultSession === undefined ? '' : `:vault:${vaultSession}`}`;
+const keyFor = (variant: Variant, fileId: number, folderId?: number | null, vaultScope?: string) =>
+    `${variant}:${getImageCacheKey(fileId, folderId)}${vaultScope === undefined ? '' : `:vault:${vaultScope}`}`;
 const normalizeAssetSource = (value: string): string => /^(?:data:|blob:|asset:|https?:)/i.test(value) ? value : convertFileSrc(value);
 
 // The URL length cannot measure an image's decoded footprint. Unknown or failed
@@ -64,8 +64,8 @@ function read(key: string): string | null {
     return entry.src;
 }
 function load(variant: Variant, fileId: number, folderId?: number | null,
-    producer?: (signal: AbortSignal) => Promise<string | null>, vaultSession?: number): Promise<string | null> {
-    const key = keyFor(variant, fileId, folderId, vaultSession);
+    producer?: (signal: AbortSignal) => Promise<string | null>, vaultScope?: string): Promise<string | null> {
+    const key = keyFor(variant, fileId, folderId, vaultScope);
     const cached = read(key);
     if (cached) return Promise.resolve(cached);
     const existing = pending.get(key);
@@ -88,11 +88,11 @@ function load(variant: Variant, fileId: number, folderId?: number | null,
     return request;
 }
 export const getCachedPreview = (fileId: number, folderId?: number | null): string | null => read(keyFor('preview', fileId, folderId));
-export const getCachedThumbnail = (fileId: number, folderId?: number | null, vaultSession?: number): string | null => read(keyFor('thumbnail', fileId, folderId, vaultSession));
+export const getCachedThumbnail = (fileId: number, folderId?: number | null, vaultScope?: string): string | null => read(keyFor('thumbnail', fileId, folderId, vaultScope));
 export const loadPreview = (fileId: number, folderId?: number | null): Promise<string | null> => load('preview', fileId, folderId);
 export const loadThumbnail = (fileId: number, folderId?: number | null): Promise<string | null> => load('thumbnail', fileId, folderId);
 export const forgetPreview = (fileId: number, folderId?: number | null): void => { cache.delete(keyFor('preview', fileId, folderId)); };
-export const forgetThumbnail = (fileId: number, folderId?: number | null, vaultSession?: number): void => { cache.delete(keyFor('thumbnail', fileId, folderId, vaultSession)); };
+export const forgetThumbnail = (fileId: number, folderId?: number | null, vaultScope?: string): void => { cache.delete(keyFor('thumbnail', fileId, folderId, vaultScope)); };
 export const subscribeImageCache = (listener: () => void): (() => void) => { subscribers.add(listener); return () => { subscribers.delete(listener); }; };
 export const imageCacheVersion = (): number => cacheGeneration;
 export const clearImageMemoryCaches = (notify = true): void => {
@@ -102,22 +102,23 @@ export const clearImageMemoryCaches = (notify = true): void => {
     if (notify) for (const listener of subscribers) listener();
 };
 
-// A vault session selects a separate memory-only cache namespace. Never request
-// a persistent/native thumbnail for protected originals, including TDMP1 media.
-export function loadVideoThumbnail(fileId: number, folderId: number | null, vaultSession?: number): Promise<string | null> {
+// A non-secret vault scope selects a separate memory-only cache namespace. It is
+// not a credential. Never request a persistent/native thumbnail for protected
+// originals, including TDMP1 media; the operation token authorizes their stream.
+export function loadVideoThumbnail(fileId: number, folderId: number | null, vaultScope?: string): Promise<string | null> {
     return load('thumbnail', fileId, folderId, async signal => {
-        if (vaultSession === undefined) {
+        if (vaultScope === undefined) {
             const existing = await invoke<string>('cmd_get_thumbnail', { messageId: fileId, folderId }).catch(() => null);
             if (signal.aborted) return null;
             if (existing) return existing;
         }
         if (signal.aborted) return null;
         const info = await invoke<{ base_url: string; token: string; operation_token?: string | null }>('cmd_get_stream_info');
-        if (signal.aborted || (vaultSession !== undefined && !info.operation_token)) return null;
+        if (signal.aborted || (vaultScope !== undefined && !info.operation_token)) return null;
         const query = new URLSearchParams({ token: info.token });
         if (info.operation_token) query.set('credential', info.operation_token);
         return captureVideoThumbnail(`${info.base_url}/stream/${folderId ?? 'home'}/${fileId}?${query}`, signal);
-    }, vaultSession);
+    }, vaultScope);
 }
 export const setImageCacheAccount = (id: string | null): void => {
     if (owner !== id) { owner = id; clearImageMemoryCaches(false); }

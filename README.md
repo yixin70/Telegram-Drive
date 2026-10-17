@@ -214,6 +214,8 @@ Telegram Drive includes opt-in encrypted transfers using the versioned **TDENC2*
 
 The implementation provides streaming XChaCha20-Poly1305 encryption before upload, authenticated streaming downloads, optional protection of the original filename and MIME type, vault auto-lock controls, recovery-bundle export/import, per-file state badges, and encryption-aware transfer queues.
 
+On desktop, the green vault button beside **Sync** opens a masked passphrase prompt without navigating to Settings. Unlocking refreshes the file listing; cancelled prompts discard the entered passphrase, and an unlocked vault is indicated on the button.
+
 > [!CAUTION]
 > **Telegram Drive cannot recover, reset, or reconstruct a lost vault passphrase, file passphrase, encryption key, or unusable recovery bundle.** Protect and test your recovery material and keep an independent backup of important files. Lost credentials or damaged recovery material can make encrypted data permanently unrecoverable.
 

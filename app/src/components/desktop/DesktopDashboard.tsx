@@ -854,6 +854,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             </AnimatePresence>
 
             <Sidebar
+                accountId={accountId}
                 folders={folders}
                 groups={groups}
                 activeFolderId={activeFolderId}

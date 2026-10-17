@@ -52,6 +52,8 @@ export async function desktopFixture(page: Page, options: {
     const fileGate = new Promise<void>(resolve => { releaseFiles = resolve; });
     let releaseThumbnails: (() => void) | undefined;
     const thumbnailGate = new Promise<void>(resolve => { releaseThumbnails = resolve; });
+    let releaseVaultUnlock: (() => void) | undefined;
+    const vaultUnlockGate = new Promise<void>(resolve => { releaseVaultUnlock = resolve; });
     const supporterGate = new Promise<void>(resolve => { releaseSupporter = resolve; });
     let releaseSearch:(()=>void)|undefined;const searchGate=new Promise<void>(resolve=>{releaseSearch=resolve;});
     let releaseStartupHealth: (()=>void) | undefined;
@@ -59,6 +61,8 @@ export async function desktopFixture(page: Page, options: {
     const savedTransfers = options.persistTransfersAcrossReload ? JSON.parse(sessionStorage.getItem('desktop-e2e-native-transfers') || 'null') : null;
     const state = {
       vaultExists:options.vaultState !== undefined && options.vaultState !== 'none',
+      vaultUnlockFails: false, holdVaultUnlock: false,
+      releaseVaultUnlock: () => { state.holdVaultUnlock = false; releaseVaultUnlock?.(); },
       jobs: savedTransfers?.jobs ?? (options.populatedTransfers ? [
         {id:'upload-active',direction:'upload',kind:'local_upload',status:'uploading',filename:'Fixture upload.bin',path:'/fixture/Fixture upload.bin'},
         {id:'upload-error',direction:'upload',kind:'local_upload',status:'failed',filename:'Fixture retry.bin',path:'/fixture/Fixture retry.bin',error:'Controlled transport failure'},
@@ -218,9 +222,15 @@ export async function desktopFixture(page: Page, options: {
             return { signed_out: true, remote_session_revoked: !state.remoteSignOutUnconfirmed };
           }
           if (command === 'cmd_get_encryption_capabilities') return { contract_version: 2, availability: 'ready', vault: true, per_file: true, core_available:options.encryptionReady ?? false, features:{upload:true,read:true,per_file_passphrase:true,recovery:true,share:true,migration:false},readable_formats:[2],writable_formats:[2],supported_suites:[1],blockers:[],vault_backend:'persistent_file',mode_alpha:false,upload_enabled:true,read_enabled:true,share_enabled:true,migration_enabled:false,envelope_version:2,app_version:'fixture',backend_build_id:'fixture' };
-          if (command === 'cmd_get_vault_status') return { exists: state.vaultExists, is_unlocked: state.vaultExists && !state.vaultLocked, session_id:state.vaultExists && !state.vaultLocked ? 123 : null,has_recovery:state.vaultExists,created_at:null,vault_id:state.vaultExists && !state.vaultLocked ? 'fixture-vault' : null };
+          // Production deliberately does not expose unlock-session handles in status.
+          if (command === 'cmd_get_vault_status') return { exists: state.vaultExists, is_unlocked: state.vaultExists && !state.vaultLocked, session_id:null,has_recovery:state.vaultExists,created_at:null,vault_id:state.vaultExists && !state.vaultLocked ? 'fixture-vault' : null };
           if (command === 'cmd_get_crypto_inventory') return {entries:[],total_files:0,total_ciphertext_bytes:0,vault_exists:state.vaultExists,experimental_format_quarantined:false};
-          if (command === 'cmd_create_vault' || command === 'cmd_unlock_vault' || command === 'cmd_import_vault_recovery') {state.vaultExists=true;state.vaultLocked=false;return 123;}
+          if (command === 'cmd_unlock_vault') {
+            if (state.holdVaultUnlock) await vaultUnlockGate;
+            if (state.vaultUnlockFails) throw new Error('Controlled vault unlock failure');
+            state.vaultLocked=false;state.emit('vault-unlocked',{});return 123;
+          }
+          if (command === 'cmd_create_vault' || command === 'cmd_import_vault_recovery') {state.vaultExists=true;state.vaultLocked=false;return 123;}
           if (command === 'cmd_lock_vault') {state.vaultLocked=true;return;}
           if (command === 'cmd_export_vault_recovery') return 'controlled-recovery-bundle';
           if (command === 'cmd_verify_vault_recovery') return {matches_vault:true,missing_profiles:0,complete:true};

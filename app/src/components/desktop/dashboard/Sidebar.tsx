@@ -16,6 +16,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { quietMetrics } from '../../../design/contracts';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { SyncStatusBadge } from '../sync/SyncStatusBadge';
+import { VaultQuickUnlock } from './VaultQuickUnlock';
 
 const PRESET_COLORS = [
     '#3B82F6', // Blue
@@ -95,6 +96,7 @@ function GroupTab({ id, groupId, label, colorHex, active, onClick, onEdit, isSor
 }
 
 interface SidebarProps {
+    accountId: string | null;
     folders: TelegramFolder[];
     groups: FolderGroup[];
     activeFolderId: number | null;
@@ -119,6 +121,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+    accountId,
     folders, groups = [], activeFolderId, setActiveFolderId, onDelete, onRename, onToggleVisibility, onExportInvite, onCreate,
     isSyncing, isConnected, onSync, onLogout, bandwidth,
     onAssignFolderToGroup, onCreateGroup, onUpdateGroup, onDeleteGroup, createFolderRequest = 0, activeSmartView = null, onSmartViewChange
@@ -446,6 +449,7 @@ export function Sidebar({
                         >
                             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                         </button>
+                        <VaultQuickUnlock key={accountId} />
                         <button
                             onClick={onLogout}
                             className="quiet-control sidebar-logout-action p-2 text-app-danger"
@@ -471,6 +475,7 @@ export function Sidebar({
                                 <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
                                 {isSyncing ? t('common.syncing') : t('common.sync')}
                             </button>
+                            <VaultQuickUnlock key={accountId} />
                             <button
                                 onClick={onLogout}
                                 className="quiet-control sidebar-logout-action flex h-[30px] flex-1 items-center justify-center gap-1.5 px-2.5 text-badge font-medium text-app-danger"

@@ -35,7 +35,7 @@ for (const lateMoov of [false, true]) {
   });
 }
 
-test('unlocked encrypted video cards use the authenticated stream and discard thumbnails on lock', async ({ page }, testInfo) => {
+test('unlocked encrypted video cards work without an exposed vault session and discard thumbnails on lock', async ({ page }, testInfo) => {
   await desktopFixture(page, { video: true, protectedVideo: true, encryptionReady: true, vaultState: 'unlocked',
     videoThumbnailUnavailable: true, settings: { viewMode: 'grid' } });
   const requests = await videoSource(page);
