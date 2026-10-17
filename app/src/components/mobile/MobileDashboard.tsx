@@ -20,7 +20,7 @@ import { useTelegramConnection } from '../../hooks/useTelegramConnection';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useFileDownload } from '../../hooks/useFileDownload';
 import { useFileOperations } from '../../hooks/useFileOperations';
-import { formatBytes, isMediaFile, isPdfFile, isImageFile, nativeShareOrCopy, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isPdfFile, isImageFile, isTextFile, nativeShareOrCopy, copyToClipboard } from '../../utils';
 import { LazyFeatureBoundary } from '../shared/LazyFeatureBoundary';
 import { useTheme } from '../../context/ThemeContext';
 import { TelegramFile, TelegramFolder, ShareInfo, BandwidthStats } from '../../types';
@@ -46,6 +46,7 @@ const LazyHelpCenterDialog = lazy(() => import('../desktop/dashboard/HelpCenterD
 const LazyMobileMediaPlayer = lazy(() => import('./MobileMediaPlayer').then((module) => ({ default: module.MobileMediaPlayer })));
 const LazyPdfViewer = lazy(() => import('../desktop/dashboard/PdfViewer').then((module) => ({ default: module.PdfViewer })));
 const LazyPreviewModal = lazy(() => import('../desktop/dashboard/PreviewModal').then((module) => ({ default: module.PreviewModal })));
+const LazyTextViewerModal = lazy(() => import('../desktop/dashboard/TextViewerModal').then((module) => ({ default: module.TextViewerModal })));
 
 interface AndroidPlaybackHistoryEntry {
   mediaId: string;
@@ -237,6 +238,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
   const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
   const [previewFile, setPreviewFile] = useState<TelegramFile | null>(null);
+  const [textFile, setTextFile] = useState<TelegramFile | null>(null);
   const [shareFile, setShareFile] = useState<TelegramFile | null>(null);
   const [bulkShareLinks, setBulkShareLinks] = useState<Array<{ file: TelegramFile; link: string }> | null>(null);
   const [bulkShareLoading, setBulkShareLoading] = useState(false);
@@ -577,7 +579,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     if (!settingsLoaded || !settings.driveTourSeen) return;
     if (!shouldShowSupporterPrompt(supporterStatus, settings.supporterPromptLastShownAt)) return;
     if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-    if (playingFile || pdfFile || previewFile || shareFile || bulkShareLinks || showHelp
+    if (playingFile || pdfFile || previewFile || textFile || shareFile || bulkShareLinks || showHelp
       || folderActionMenu || renameFolder || isSidebarOpen) return;
 
     updateSetting('supporterPromptLastShownAt', Date.now());
@@ -589,6 +591,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     pdfFile,
     playingFile,
     previewFile,
+    textFile,
     renameFolder,
     settings.driveTourSeen,
     settings.supporterPromptLastShownAt,
@@ -703,6 +706,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       setPdfFile(file);
     } else if (isImageFile(file.name)) {
       setPreviewFile(file);
+    } else if (isTextFile(file.name)) {
+      setTextFile(file);
     } else {
       toast.info(`Preview not supported for ${file.name}`);
     }
@@ -835,6 +840,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       if (playingFile) { setPlayingFile(null); return true; }
       if (pdfFile) { setPdfFile(null); return true; }
       if (previewFile) { setPreviewFile(null); return true; }
+      if (textFile) { setTextFile(null); return true; }
       if (shareFile) { setShareFile(null); return true; }
       if (bulkShareLinks) { setBulkShareLinks(null); return true; }
       if (showHelp) { setShowHelp(false); return true; }
@@ -847,7 +853,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       return false;
     };
     return () => { delete androidWindow.__telegramDriveHandleAndroidBack; };
-  }, [activeFolderId, activeTab, bulkShareLinks, folderActionMenu, isAndroid, isSidebarOpen, pdfFile, playingFile, previewFile, renameFolder, selectedIds.length, setActiveFolderId, shareFile, showHelp, supporterOfferTrigger]);
+  }, [activeFolderId, activeTab, bulkShareLinks, folderActionMenu, isAndroid, isSidebarOpen, pdfFile, playingFile, previewFile, textFile, renameFolder, selectedIds.length, setActiveFolderId, shareFile, showHelp, supporterOfferTrigger]);
 
   return (
     <div className={`absolute inset-0 flex flex-col bg-telegram-bg text-telegram-text overflow-hidden select-none font-sans ${isTelevision ? 'tv-shell' : ''}`}>
@@ -1655,6 +1661,17 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             onClose={() => setPreviewFile(null)}
           />
         </LazyFeatureBoundary>
+      )}
+      {textFile && (
+        <div className="fixed inset-0 z-[100] bg-telegram-bg">
+          <LazyFeatureBoundary>
+            <LazyTextViewerModal
+              file={textFile}
+              onClose={() => setTextFile(null)}
+              activeFolderId={activeFolderId}
+            />
+          </LazyFeatureBoundary>
+        </div>
       )}
 
       {shareFile && (

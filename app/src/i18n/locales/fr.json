@@ -1262,7 +1262,14 @@
     "pdf_path_failed": "Échec de l’obtention du chemin de l’aperçu PDF.",
     "pdf_load_failed": "Échec du chargement du PDF.",
     "image_render_failed": "Échec de l’affichage de l’aperçu de l’image",
-    "unmute": "Rétablir le son"
+    "unmute": "Rétablir le son",
+    "text_loading": "Chargement du texte…",
+    "text_read_only": "Ce fichier ne peut pas être modifié dans l'application.",
+    "text_too_large": "Ce fichier texte est trop volumineux pour être modifié.",
+    "text_saved": "Enregistré.",
+    "text_save_error": "Échec de l'enregistrement. Veuillez réessayer.",
+    "text_discard_confirm": "Ignorer les modifications non enregistrées ?",
+    "text_revert": "Rétablir"
   },
   "operations": {
     "delete_file": "Supprimer le fichier",

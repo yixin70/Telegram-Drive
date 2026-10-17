@@ -1262,7 +1262,14 @@
     "pdf_path_failed": "Impossibile ottenere il percorso di anteprima del PDF.",
     "pdf_load_failed": "Impossibile caricare il PDF.",
     "image_render_failed": "Impossibile visualizzare l’anteprima dell’immagine",
-    "unmute": "Riattiva audio"
+    "unmute": "Riattiva audio",
+    "text_loading": "Caricamento del testo…",
+    "text_read_only": "Questo file non può essere modificato nell'app.",
+    "text_too_large": "Questo file di testo è troppo grande per essere modificato.",
+    "text_saved": "Salvato.",
+    "text_save_error": "Impossibile salvare. Riprova.",
+    "text_discard_confirm": "Ignorare le modifiche non salvate?",
+    "text_revert": "Ripristina"
   },
   "operations": {
     "delete_file": "Elimina file",

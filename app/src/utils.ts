@@ -8,6 +8,7 @@ export {
   isPdfFile,
   isRarFile,
   isSevenZFile,
+  isTextFile,
   isVideoFile,
   isZipFile,
   sanitizeFilename,

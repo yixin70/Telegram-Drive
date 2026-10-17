@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "Hindi makuha ang path ng PDF preview.",
     "pdf_load_failed": "Hindi ma-load ang PDF.",
     "image_render_failed": "Hindi maipakita ang image preview",
-    "unmute": "Ibalik ang tunog"
+    "unmute": "Ibalik ang tunog",
+    "text_loading": "Nilo-load ang teksto…",
+    "text_read_only": "Hindi ma-edit ang file na ito sa app.",
+    "text_too_large": "Masyadong malaki ang text file na ito para i-edit.",
+    "text_saved": "Nai-save.",
+    "text_save_error": "Hindi mai-save. Subukan muli.",
+    "text_discard_confirm": "Itapon ang mga hindi nai-save na pagbabago?",
+    "text_revert": "Ibalik"
   },
   "operations": {
     "delete_file": "Tanggalin ang file",

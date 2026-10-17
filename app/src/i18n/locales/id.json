@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "Gagal mengambil jalur pratinjau PDF.",
     "pdf_load_failed": "Gagal memuat PDF.",
     "image_render_failed": "Gagal menampilkan pratinjau gambar",
-    "unmute": "Aktifkan suara"
+    "unmute": "Aktifkan suara",
+    "text_loading": "Memuat teks…",
+    "text_read_only": "File ini tidak dapat diedit di aplikasi.",
+    "text_too_large": "File teks ini terlalu besar untuk diedit.",
+    "text_saved": "Tersimpan.",
+    "text_save_error": "Tidak dapat menyimpan. Coba lagi.",
+    "text_discard_confirm": "Buang perubahan yang belum disimpan?",
+    "text_revert": "Kembalikan"
   },
   "operations": {
     "delete_file": "Hapus file",

@@ -1269,7 +1269,14 @@
     "pdf_path_failed": "Nie udało się pobrać ścieżki podglądu PDF.",
     "pdf_load_failed": "Nie udało się załadować PDF.",
     "image_render_failed": "Nie udało się wyświetlić podglądu obrazu",
-    "unmute": "Włącz dźwięk"
+    "unmute": "Włącz dźwięk",
+    "text_loading": "Ładowanie tekstu…",
+    "text_read_only": "Tego pliku nie można edytować w aplikacji.",
+    "text_too_large": "Ten plik tekstowy jest zbyt duży, aby go edytować.",
+    "text_saved": "Zapisano.",
+    "text_save_error": "Nie udało się zapisać. Spróbuj ponownie.",
+    "text_discard_confirm": "Odrzucić niezapisane zmiany?",
+    "text_revert": "Przywróć"
   },
   "operations": {
     "delete_file": "Usuń plik",

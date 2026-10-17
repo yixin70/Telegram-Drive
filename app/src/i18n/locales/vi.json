@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "Không thể lấy đường dẫn xem trước PDF.",
     "pdf_load_failed": "Không thể tải PDF.",
     "image_render_failed": "Không thể hiển thị ảnh xem trước",
-    "unmute": "Bật tiếng"
+    "unmute": "Bật tiếng",
+    "text_loading": "Đang tải văn bản…",
+    "text_read_only": "Không thể chỉnh sửa tệp này trong ứng dụng.",
+    "text_too_large": "Tệp văn bản này quá lớn để chỉnh sửa.",
+    "text_saved": "Đã lưu.",
+    "text_save_error": "Không thể lưu. Vui lòng thử lại.",
+    "text_discard_confirm": "Bỏ các thay đổi chưa lưu?",
+    "text_revert": "Hoàn tác"
   },
   "operations": {
     "delete_file": "Xóa tệp",

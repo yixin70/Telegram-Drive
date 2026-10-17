@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "Failed to fetch PDF preview path.",
     "pdf_load_failed": "Failed to load PDF.",
     "image_render_failed": "Failed to render image preview",
-    "unmute": "Unmute"
+    "unmute": "Unmute",
+    "text_loading": "Loading text…",
+    "text_read_only": "This file can't be edited in the app.",
+    "text_too_large": "This text file is too large to edit.",
+    "text_saved": "Saved.",
+    "text_save_error": "Could not save. Please try again.",
+    "text_discard_confirm": "Discard unsaved changes?",
+    "text_revert": "Revert"
   },
   "operations": {
     "delete_file": "Delete File",

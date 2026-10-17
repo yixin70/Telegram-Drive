@@ -22,7 +22,7 @@ import {
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
 import { TelegramFile, BandwidthStats, type SmartView, type StorageInsightResult } from '../../types';
-import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, isTextFile, copyToClipboard } from '../../utils';
 
 // Components
 import { Sidebar } from './dashboard/Sidebar';
@@ -65,6 +65,7 @@ const LazyPreviewModal = lazy(() => import('./dashboard/PreviewModal').then((mod
 const LazyMediaPlayer = lazy(() => import('./dashboard/MediaPlayer').then((module) => ({ default: module.MediaPlayer })));
 const LazyPdfViewer = lazy(() => import('./dashboard/PdfViewer').then((module) => ({ default: module.PdfViewer })));
 const LazyArchiveViewerModal = lazy(() => import('./dashboard/ArchiveViewerModal').then((module) => ({ default: module.ArchiveViewerModal })));
+const LazyTextViewerModal = lazy(() => import('./dashboard/TextViewerModal').then((module) => ({ default: module.TextViewerModal })));
 const LazySettingsModal = lazy(() => import('./dashboard/SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const SupporterOfferDialog = lazy(() => import('../shared/SupporterOfferDialog').then(module => ({ default: module.SupporterOfferDialog })));
 const LazyHelpCenterDialog = lazy(() => import('./dashboard/HelpCenterDialog').then((module) => ({ default: module.HelpCenterDialog })));
@@ -203,6 +204,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [localPreview, setLocalPreview] = useState<{ key: string; path: string } | null>(null);
     const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
     const [archiveViewFile, setArchiveViewFile] = useState<TelegramFile | null>(null);
+    const [textViewFile, setTextViewFile] = useState<TelegramFile | null>(null);
     const {
         shareFile, shareOwnerId, setShareFile, bulkShareLinks, bulkShareLoading, bulkShareCopied,
         setBulkShareLinks, createBulkShares, handleCopyBulkLink, handleNativeShareBulkLink,
@@ -341,7 +343,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const { downloadQueue, queueDownload, queueBulkDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads, pauseAll: pauseDownloads, resumeAll: resumeDownloads, cancelItem: cancelDownloadItem, retryItem: retryDownloadItem } = useFileDownload(store, undefined, undefined, accountId ?? undefined);
 
     useSupporterPrompt(
-        Boolean(!accountId || isLoading || isSyncing || previewFile || playingFile || pdfFile || archiveViewFile
+        Boolean(!accountId || isLoading || isSyncing || previewFile || playingFile || pdfFile || archiveViewFile || textViewFile
             || localPreview || showSettings || showMoveModal || shareFile || showRemoteUpload || showHelp
             || showShortcuts || renameFolder || renameFileTarget || bulkShareLinks || bulkShareLoading
             || internalDrag || selectedIds.length || workspaceKeys !== null || searchTerm
@@ -519,7 +521,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         onShare: handleKeyboardShare,
         onRename: handleKeyboardRename,
         onShowShortcuts: () => setShowShortcuts(true),
-        enabled: !previewFile && !playingFile && !pdfFile && !archiveViewFile
+        enabled: !previewFile && !playingFile && !pdfFile && !archiveViewFile && !textViewFile
             && !showMoveModal && !showSettings && !showShortcuts && !showHelp && !supporterOfferTrigger && workspaceKeys === null
             && !showRemoteUpload && !shareFile && !bulkShareLinks
             && settings.driveTourSeen
@@ -527,7 +529,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
     const handlePreview = (file: TelegramFile, orderedFiles?: TelegramFile[], localPath?: string) => {
         setLocalPreview(localPath ? { key: previewFileKey(file), path: localPath } : null);
-        if (localPath && !isMediaFile(file.name) && !isPdfFile(file.name) && !isImageFile(file.name)) {
+        if (localPath && !isMediaFile(file.name) && !isPdfFile(file.name) && !isImageFile(file.name) && !isTextFile(file.name)) {
             setPlayingFile(null); setPreviewFile(null); setPdfFile(null); setArchiveViewFile(null);
             void invoke('cmd_open_file_externally', { path: localPath }).catch(() => toast.error(t('workspace.preview_failed')));
             return;
@@ -559,27 +561,38 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         const isMedia = isMediaFile(file.name);
         const isPdf = isPdfFile(file.name);
         const isArchive = isArchiveFile(file.name);
+        const isText = isTextFile(file.name);
 
         if (isArchive) {
             setArchiveViewFile(file);
             setPreviewFile(null);
             setPlayingFile(null);
             setPdfFile(null);
+            setTextViewFile(null);
         } else if (isMedia) {
             setPlayingFile(file);
             setPreviewFile(null);
             setPdfFile(null);
             setArchiveViewFile(null);
+            setTextViewFile(null);
         } else if (isPdf) {
             setPdfFile(file);
             setPreviewFile(null);
             setPlayingFile(null);
+            setArchiveViewFile(null);
+            setTextViewFile(null);
+        } else if (isText) {
+            setTextViewFile(file);
+            setPreviewFile(null);
+            setPlayingFile(null);
+            setPdfFile(null);
             setArchiveViewFile(null);
         } else {
             setPreviewFile(file);
             setPlayingFile(null);
             setPdfFile(null);
             setArchiveViewFile(null);
+            setTextViewFile(null);
         }
     };
 
@@ -596,29 +609,40 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         const isMedia = isMediaFile(nextFile.name);
         const isPdf = isPdfFile(nextFile.name);
         const isArchive = isArchiveFile(nextFile.name);
+        const isText = isTextFile(nextFile.name);
 
         if (isArchive) {
             setArchiveViewFile(nextFile);
             setPreviewFile(null);
             setPlayingFile(null);
             setPdfFile(null);
+            setTextViewFile(null);
         } else if (isMedia) {
             setPlayingFile(nextFile);
             setPreviewFile(null);
             setPdfFile(null);
             setArchiveViewFile(null);
+            setTextViewFile(null);
         } else if (isPdf) {
             setPdfFile(nextFile);
             setPreviewFile(null);
             setPlayingFile(null);
+            setArchiveViewFile(null);
+            setTextViewFile(null);
+        } else if (isText) {
+            setTextViewFile(nextFile);
+            setPreviewFile(null);
+            setPlayingFile(null);
+            setPdfFile(null);
             setArchiveViewFile(null);
         } else {
             setPreviewFile(nextFile);
             setPlayingFile(null);
             setPdfFile(null);
             setArchiveViewFile(null);
+            setTextViewFile(null);
         }
-    }, [previewContextFiles, previewFile, playingFile, pdfFile, archiveViewFile]);
+    }, [previewContextFiles, previewFile, playingFile, pdfFile, archiveViewFile, textViewFile]);
 
     const handleNextPreview = useCallback(() => {
         navigatePreview(1);
@@ -633,7 +657,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             return { nextFile: null as TelegramFile | null, prevFile: null as TelegramFile | null };
         }
 
-        const currentFile = previewFile ?? playingFile ?? pdfFile ?? archiveViewFile;
+        const currentFile = previewFile ?? playingFile ?? pdfFile ?? archiveViewFile ?? textViewFile;
         if (!currentFile) {
             return { nextFile: null as TelegramFile | null, prevFile: null as TelegramFile | null };
         }
@@ -650,7 +674,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             nextFile: previewContextFiles[nextIdx] || null,
             prevFile: previewContextFiles[prevIdx] || null,
         };
-    }, [previewContextFiles, previewFile, playingFile, pdfFile, archiveViewFile]);
+    }, [previewContextFiles, previewFile, playingFile, pdfFile, archiveViewFile, textViewFile]);
 
     const handleInternalDragStart = (event: DragStartEvent) => {
         const isCurrent = captureMutationScope();
@@ -979,6 +1003,25 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         totalItems={previewContextFiles.length}
                         nextFile={previewNeighbors.nextFile}
                         prevFile={previewNeighbors.prevFile}
+                    />
+                </LazyFeatureBoundary>
+            )}
+
+            {textViewFile && (
+                <LazyFeatureBoundary key={`text:${previewFileKey(textViewFile)}`}>
+                    <LazyTextViewerModal
+                        file={textViewFile}
+                        onClose={() => setTextViewFile(null)}
+                        onNext={handleNextPreview}
+                        onPrev={handlePrevPreview}
+                        currentIndex={previewContextIndex}
+                        totalItems={previewContextFiles.length}
+                        activeFolderId={sourceFolder(textViewFile, activeFolderId)}
+                        localPath={localPreview?.key === previewFileKey(textViewFile) ? localPreview.path : undefined}
+                        onSaved={(messageId) => {
+                            setPreviewContextFiles((files) => files.map((candidate) => candidate.id === textViewFile.id ? { ...candidate, id: messageId } : candidate));
+                            setTextViewFile((current) => current && current.id === textViewFile.id ? { ...current, id: messageId } : current);
+                        }}
                     />
                 </LazyFeatureBoundary>
             )}

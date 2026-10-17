@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "PDF-Vorschaupfad konnte nicht abgerufen werden.",
     "pdf_load_failed": "PDF konnte nicht geladen werden.",
     "image_render_failed": "Bildvorschau konnte nicht dargestellt werden",
-    "unmute": "Ton einschalten"
+    "unmute": "Ton einschalten",
+    "text_loading": "Text wird geladen…",
+    "text_read_only": "Diese Datei kann in der App nicht bearbeitet werden.",
+    "text_too_large": "Diese Textdatei ist zu groß zum Bearbeiten.",
+    "text_saved": "Gespeichert.",
+    "text_save_error": "Speichern fehlgeschlagen. Bitte erneut versuchen.",
+    "text_discard_confirm": "Nicht gespeicherte Änderungen verwerfen?",
+    "text_revert": "Zurücksetzen"
   },
   "operations": {
     "delete_file": "Datei löschen",

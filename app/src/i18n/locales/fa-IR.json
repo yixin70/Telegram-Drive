@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "دریافت مسیر پیش‌نمایش PDF ناموفق بود.",
     "pdf_load_failed": "بارگیری PDF ناموفق بود.",
     "image_render_failed": "نمایش پیش‌نمایش تصویر ناموفق بود",
-    "unmute": "فعال کردن صدا"
+    "unmute": "فعال کردن صدا",
+    "text_loading": "در حال بارگذاری متن…",
+    "text_read_only": "این فایل در برنامه قابل ویرایش نیست.",
+    "text_too_large": "این فایل متنی برای ویرایش بیش از حد بزرگ است.",
+    "text_saved": "ذخیره شد.",
+    "text_save_error": "ذخیره نشد. دوباره تلاش کنید.",
+    "text_discard_confirm": "تغییرات ذخیره‌نشده دور ریخته شود؟",
+    "text_revert": "بازگردانی"
   },
   "operations": {
     "delete_file": "حذف پرونده",

@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "Gagal mendapatkan laluan pratonton PDF.",
     "pdf_load_failed": "Gagal memuatkan PDF.",
     "image_render_failed": "Gagal memaparkan pratonton imej",
-    "unmute": "Nyahsenyap"
+    "unmute": "Nyahsenyap",
+    "text_loading": "Memuatkan teks…",
+    "text_read_only": "Fail ini tidak boleh diedit dalam apl.",
+    "text_too_large": "Fail teks ini terlalu besar untuk diedit.",
+    "text_saved": "Disimpan.",
+    "text_save_error": "Tidak dapat menyimpan. Sila cuba lagi.",
+    "text_discard_confirm": "Buang perubahan yang tidak disimpan?",
+    "text_revert": "Kembalikan"
   },
   "operations": {
     "delete_file": "Padam fail",

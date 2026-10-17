@@ -1262,7 +1262,14 @@
     "pdf_path_failed": "No se pudo obtener la ruta de vista previa del PDF.",
     "pdf_load_failed": "No se pudo cargar el PDF.",
     "image_render_failed": "No se pudo mostrar la vista previa de la imagen",
-    "unmute": "Activar sonido"
+    "unmute": "Activar sonido",
+    "text_loading": "Cargando texto…",
+    "text_read_only": "Este archivo no se puede editar en la aplicación.",
+    "text_too_large": "Este archivo de texto es demasiado grande para editarlo.",
+    "text_saved": "Guardado.",
+    "text_save_error": "No se pudo guardar. Inténtalo de nuevo.",
+    "text_discard_confirm": "¿Descartar los cambios sin guardar?",
+    "text_revert": "Revertir"
   },
   "operations": {
     "delete_file": "Eliminar archivo",

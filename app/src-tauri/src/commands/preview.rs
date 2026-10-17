@@ -449,6 +449,76 @@ pub async fn cmd_get_preview(
     compat_asset(app_handle, folder_id, message_id, false).await
 }
 
+/// Largest `.txt` file the in-app editor will load or save. Kept in step with
+/// the frontend guard so the UI can mark oversized files read-only.
+pub const MAX_EDITABLE_TEXT_BYTES: u64 = 1024 * 1024;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFilePayload {
+    content: String,
+    size: u64,
+    truncated: bool,
+    encoding: String,
+}
+
+/// Decodes plain-text bytes, dropping a UTF-8 BOM and replacing invalid
+/// sequences so an oddly encoded file still opens instead of failing.
+fn decode_text(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Reads a `.txt` document through the same bounded plaintext preview cache
+/// `cmd_get_preview` uses, capped at `MAX_EDITABLE_TEXT_BYTES`.
+#[tauri::command]
+pub async fn cmd_read_text_file(
+    message_id: i32,
+    folder_id: Option<i64>,
+    app_handle: tauri::AppHandle,
+    _state: State<'_, TelegramState>,
+    _bw_state: State<'_, Arc<BandwidthManager>>,
+    _net_config: State<'_, Arc<NetworkConfig>>,
+    _db_pool: State<'_, DbConnection>,
+) -> Result<TextFilePayload, String> {
+    let path = compat_asset(app_handle, folder_id, message_id, false).await?;
+    let size = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| error.to_string())?
+        .len();
+    let truncated = size > MAX_EDITABLE_TEXT_BYTES;
+    let bytes = if truncated {
+        use tokio::io::AsyncReadExt;
+        let mut file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut buffer = vec![0u8; MAX_EDITABLE_TEXT_BYTES as usize];
+        let mut filled = 0usize;
+        while filled < buffer.len() {
+            let read = file
+                .read(&mut buffer[filled..])
+                .await
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        buffer.truncate(filled);
+        buffer
+    } else {
+        tokio::fs::read(&path)
+            .await
+            .map_err(|error| error.to_string())?
+    };
+    Ok(TextFilePayload {
+        content: decode_text(&bytes),
+        size,
+        truncated,
+        encoding: "utf-8".to_string(),
+    })
+}
+
 #[tauri::command]
 pub async fn cmd_get_display_preview(
     message_id: i32,

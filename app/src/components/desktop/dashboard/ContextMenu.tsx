@@ -96,6 +96,11 @@ export function ContextMenu({ x, y, file, onClose, onDownload, onDelete, onPrevi
                             <FileText className="w-4 h-4 text-red-400" />
                             {t('files.view_pdf')}
                         </>
+                    ) : actions.previewAction === 'view_text' ? (
+                        <>
+                            <FileText className="w-4 h-4 text-blue-400" />
+                            {t('files.preview')}
+                        </>
                     ) : (
                         <>
                             <Eye className="w-4 h-4 text-blue-500" />

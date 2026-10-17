@@ -1,7 +1,7 @@
 import type { TelegramFile, TelegramFolder } from '../../../types';
-import { isMediaFile, isPdfFile } from '../../../utils';
+import { isMediaFile, isPdfFile, isTextFile } from '../../../utils';
 
-export type FilePreviewAction = 'open' | 'play' | 'view_pdf' | 'preview';
+export type FilePreviewAction = 'open' | 'play' | 'view_pdf' | 'view_text' | 'preview';
 
 export interface FileActionDescriptor {
   isFolder: boolean;
@@ -24,7 +24,9 @@ export function describeFileActions(file: TelegramFile): FileActionDescriptor {
         ? 'play'
         : isPdfFile(file.name)
           ? 'view_pdf'
-          : 'preview',
+          : isTextFile(file.name)
+            ? 'view_text'
+            : 'preview',
   };
 }
 

@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "PDF önizleme yolu alınamadı.",
     "pdf_load_failed": "PDF yüklenemedi.",
     "image_render_failed": "Görsel önizlemesi gösterilemedi",
-    "unmute": "Sesi aç"
+    "unmute": "Sesi aç",
+    "text_loading": "Metin yükleniyor…",
+    "text_read_only": "Bu dosya uygulamada düzenlenemez.",
+    "text_too_large": "Bu metin dosyası düzenlenemeyecek kadar büyük.",
+    "text_saved": "Kaydedildi.",
+    "text_save_error": "Kaydedilemedi. Lütfen tekrar deneyin.",
+    "text_discard_confirm": "Kaydedilmemiş değişiklikler atılsın mı?",
+    "text_revert": "Geri al"
   },
   "operations": {
     "delete_file": "Dosyayı sil",

@@ -1283,7 +1283,14 @@
     "pdf_path_failed": "فشل جلب مسار معاينة PDF.",
     "pdf_load_failed": "فشل تحميل PDF.",
     "image_render_failed": "فشل عرض معاينة الصورة",
-    "unmute": "إلغاء الكتم"
+    "unmute": "إلغاء الكتم",
+    "text_loading": "جارٍ تحميل النص…",
+    "text_read_only": "لا يمكن تحرير هذا الملف داخل التطبيق.",
+    "text_too_large": "ملف النص هذا كبير جدًا بحيث لا يمكن تحريره.",
+    "text_saved": "تم الحفظ.",
+    "text_save_error": "تعذّر الحفظ. حاول مرة أخرى.",
+    "text_discard_confirm": "هل تريد تجاهل التغييرات غير المحفوظة؟",
+    "text_revert": "تراجع"
   },
   "operations": {
     "delete_file": "حذف الملف",

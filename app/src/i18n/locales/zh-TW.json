@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "取得 PDF 預覽路徑失敗。",
     "pdf_load_failed": "載入 PDF 失敗。",
     "image_render_failed": "顯示圖片預覽失敗",
-    "unmute": "取消靜音"
+    "unmute": "取消靜音",
+    "text_loading": "正在載入文字…",
+    "text_read_only": "此檔案無法在應用程式內編輯。",
+    "text_too_large": "此文字檔案過大，無法編輯。",
+    "text_saved": "已儲存。",
+    "text_save_error": "無法儲存。請再試一次。",
+    "text_discard_confirm": "捨棄未儲存的變更？",
+    "text_revert": "還原"
   },
   "operations": {
     "delete_file": "刪除檔案",

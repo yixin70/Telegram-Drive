@@ -1262,7 +1262,14 @@
     "pdf_path_failed": "Falha ao obter o caminho da prévia do PDF.",
     "pdf_load_failed": "Falha ao carregar PDF.",
     "image_render_failed": "Falha ao exibir prévia da imagem",
-    "unmute": "Ativar som"
+    "unmute": "Ativar som",
+    "text_loading": "Carregando texto…",
+    "text_read_only": "Este arquivo não pode ser editado no aplicativo.",
+    "text_too_large": "Este arquivo de texto é grande demais para editar.",
+    "text_saved": "Salvo.",
+    "text_save_error": "Não foi possível salvar. Tente novamente.",
+    "text_discard_confirm": "Descartar as alterações não salvas?",
+    "text_revert": "Reverter"
   },
   "operations": {
     "delete_file": "Excluir arquivo",

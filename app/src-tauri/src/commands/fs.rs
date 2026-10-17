@@ -3579,6 +3579,164 @@ pub async fn cmd_delete_file(
     Ok(true)
 }
 
+/// Largest `.txt` payload `cmd_save_text_file` accepts, in bytes.
+const MAX_EDITABLE_TEXT_BYTES: usize = 1024 * 1024;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTextFile {
+    message_id: i32,
+    size: u64,
+}
+
+/// Saves edited text by replacing the document: the new bytes are uploaded as a
+/// fresh message that reuses the current display name, then the old message is
+/// deleted. In-place `EditMessage(media)` replacement is not used anywhere in
+/// this codebase and is unverified, so this follows the proven WebDAV PUT
+/// replacement pattern instead.
+#[tauri::command]
+pub async fn cmd_save_text_file(
+    message_id: i32,
+    folder_id: Option<i64>,
+    content: String,
+    state: State<'_, TelegramState>,
+    bw_state: State<'_, Arc<BandwidthManager>>,
+    net_config: State<'_, Arc<NetworkConfig>>,
+    _db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
+) -> Result<SavedTextFile, String> {
+    if content.len() > MAX_EDITABLE_TEXT_BYTES {
+        return Err("[TEXT_TOO_LARGE] This text file is too large to edit in the app".into());
+    }
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
+    account.validate()?;
+    let messages = client
+        .get_messages_by_id(&peer, &[message_id])
+        .await
+        .map_err(|error| error.to_string())?;
+    let message = messages
+        .first()
+        .and_then(Option::as_ref)
+        .ok_or("The file was not found; refresh the folder")?;
+    crate::multipart::reject_message(message)?;
+    if let Some(media) = message.media() {
+        if resolve_remote_envelope(
+            &account,
+            &client,
+            folder_id,
+            message_id,
+            &media,
+            message.text(),
+        )
+        .await?
+        .is_some()
+        {
+            return Err(
+                "[ENCRYPTED_EDIT_UNAVAILABLE] Editing encrypted text files is not yet available"
+                    .into(),
+            );
+        }
+    }
+    // Keep the name the file currently shows: the caption when a rename set it,
+    // otherwise the document's built-in filename.
+    let display_name = match message.media() {
+        Some(Media::Document(document)) => {
+            let caption = message.text();
+            if caption.is_empty() {
+                document.name().to_string()
+            } else {
+                caption.to_string()
+            }
+        }
+        _ => "note.txt".to_string(),
+    };
+
+    let bytes = content.into_bytes();
+    let total = bytes.len() as u64;
+    // The sender is kept alive only so the upload is not treated as cancelled.
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    let _cancel_guard = cancel_tx;
+    let mut reservation = BandwidthReservation::upload(bw_state.inner().clone(), total)?;
+
+    let mut reader = bytes.as_slice();
+    let uploaded = match send_upload_stream(
+        &client,
+        None,
+        &mut reader,
+        total,
+        display_name.clone(),
+        None,
+        &mut cancel_rx,
+        crate::traffic::Traffic {
+            network: net_config.inner().clone(),
+            account: account.clone(),
+            direction: crate::traffic::Direction::Upload,
+        },
+    )
+    .await?
+    {
+        SentParts::Done { file, .. } => file,
+        _ => return Err("The upload could not be completed; try again".into()),
+    };
+
+    account.validate()?;
+    // send_message generates a new random_id on every invocation, so a lost
+    // reply is not retried here: the folder is invalidated and re-listed instead.
+    let sent = match client
+        .send_message(
+            &peer,
+            InputMessage::new()
+                .text(display_name.clone())
+                .file(uploaded),
+        )
+        .await
+    {
+        Ok(sent) => sent,
+        Err(error) => {
+            crate::file_inventory::changed(&account, folder_id, &[])?;
+            return Err(map_error(error));
+        }
+    };
+    let new_message_id = sent.id();
+    reservation.commit();
+
+    account.validate()?;
+    client
+        .delete_messages(&peer, &[message_id])
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = crate::workspace::remote_changes::record(
+        &account,
+        vec![crate::workspace::remote_changes::Change::Delete {
+            folder: folder_id,
+            message: message_id,
+        }],
+    )
+    .await
+    {
+        log::warn!("Remote edit succeeded but its account cache could not be updated: {error}");
+    }
+    // Drop the replaced message's cached preview, then force a re-list so the
+    // new message id converges across the app.
+    let _ =
+        crate::commands::cmd_delete_preview_for_message(message_id, folder_id, app.clone()).await;
+    crate::file_inventory::changed(&account, folder_id, &[message_id])?;
+    account.validate()?;
+    Ok(SavedTextFile {
+        message_id: new_message_id,
+        size: total,
+    })
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DownloadFileRequest {
     #[serde(default)]

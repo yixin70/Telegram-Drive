@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "获取 PDF 预览路径失败。",
     "pdf_load_failed": "加载 PDF 失败。",
     "image_render_failed": "显示图像预览失败",
-    "unmute": "取消静音"
+    "unmute": "取消静音",
+    "text_loading": "正在加载文本…",
+    "text_read_only": "此文件无法在应用内编辑。",
+    "text_too_large": "此文本文件太大，无法编辑。",
+    "text_saved": "已保存。",
+    "text_save_error": "无法保存。请重试。",
+    "text_discard_confirm": "放弃未保存的更改？",
+    "text_revert": "还原"
   },
   "operations": {
     "delete_file": "删除文件",

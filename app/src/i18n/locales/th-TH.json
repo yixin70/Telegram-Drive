@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "ดึงเส้นทางตัวอย่าง PDF ไม่สำเร็จ",
     "pdf_load_failed": "โหลด PDF ไม่สำเร็จ",
     "image_render_failed": "แสดงตัวอย่างรูปภาพไม่สำเร็จ",
-    "unmute": "เปิดเสียง"
+    "unmute": "เปิดเสียง",
+    "text_loading": "กำลังโหลดข้อความ…",
+    "text_read_only": "ไฟล์นี้แก้ไขในแอปไม่ได้",
+    "text_too_large": "ไฟล์ข้อความนี้ใหญ่เกินไปที่จะแก้ไข",
+    "text_saved": "บันทึกแล้ว",
+    "text_save_error": "บันทึกไม่สำเร็จ โปรดลองอีกครั้ง",
+    "text_discard_confirm": "ทิ้งการเปลี่ยนแปลงที่ยังไม่ได้บันทึกหรือไม่",
+    "text_revert": "ย้อนกลับ"
   },
   "operations": {
     "delete_file": "ลบไฟล์",

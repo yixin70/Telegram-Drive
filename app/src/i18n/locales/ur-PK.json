@@ -1255,7 +1255,14 @@
     "pdf_path_failed": "PDF پیش منظر کا راستہ نہیں ملا۔",
     "pdf_load_failed": "PDF لوڈ نہیں ہو سکی۔",
     "image_render_failed": "تصویر کا پیش منظر دکھانا ناکام ہوا",
-    "unmute": "آواز کھولیں"
+    "unmute": "آواز کھولیں",
+    "text_loading": "متن لوڈ ہو رہا ہے…",
+    "text_read_only": "اس فائل کو ایپ میں تبدیل نہیں کیا جا سکتا۔",
+    "text_too_large": "یہ ٹیکسٹ فائل ترمیم کے لیے بہت بڑی ہے۔",
+    "text_saved": "محفوظ ہو گیا۔",
+    "text_save_error": "محفوظ نہیں ہو سکا۔ دوبارہ کوشش کریں۔",
+    "text_discard_confirm": "غیر محفوظ تبدیلیاں رد کریں؟",
+    "text_revert": "واپس کریں"
   },
   "operations": {
     "delete_file": "فائل حذف کریں",
