@@ -104,7 +104,7 @@ test('transfer rates from a previous account cannot appear after switching accou
 });
 
 test('per-file transfer speeds follow the selected application language', async ({ page }) => {
-  await desktopFixture(page, { populatedTransfers: true, settings: { language: 'fr' } });
+  await desktopFixture(page, { populatedTransfers: true, settings: { language: 'es' } });
   await page.goto('/');
   const center = page.locator('aside').filter({ has: page.getByText('Fixture upload.bin', { exact: true }) });
   await expect(center.getByText('Fixture upload.bin', { exact: true })).toBeVisible();
@@ -114,5 +114,5 @@ test('per-file transfer speeds follow the selected application language', async 
     Object.assign(job, { speedBytesPerSec: 1.5 * 1024 ** 2, revision: job.revision + 1 });
     state.emit('transfer-upserted', { ...job });
   });
-  await expect(center.getByText('1,5Mo/s', { exact: true })).toBeVisible();
+  await expect(center.getByText('1,5MB/s', { exact: true })).toBeVisible();
 });

@@ -27,7 +27,7 @@ export default function DesignGallery() {
   const [enabled, setEnabled] = useState(true);
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [direction, setDirection] = useState<'ltr' | 'rtl'>('ltr');
-  const [auditLanguage, setAuditLanguage] = useState<SupportedLanguage>('de');
+  const [auditLanguage, setAuditLanguage] = useState<SupportedLanguage>('es');
   const [loadedAuditLanguage, setLoadedAuditLanguage] = useState<SupportedLanguage | null>(null);
   const query = new URLSearchParams(window.location.search);
   const localeStress = query.has('locale-stress');
@@ -98,7 +98,7 @@ export default function DesignGallery() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold">Localized offline storage fixture</h2>
-                <p className="mt-1 max-w-xl text-xs text-app-text-secondary">Narrow-width review for long strings, RTL direction, and CJK line breaking.</p>
+                <p className="mt-1 max-w-xl text-xs text-app-text-secondary">Narrow-width review for English and Spanish strings.</p>
               </div>
               <label className="text-xs font-medium text-app-text-secondary">
                 Audit language
@@ -108,21 +108,8 @@ export default function DesignGallery() {
                   value={auditLanguage}
                   onChange={(event) => changeAuditLanguage(event.target.value as SupportedLanguage)}
                 >
-                  <option value="de">Deutsch</option>
-                  <option value="uk-UA">Українська</option>
-                  <option value="pl-PL">Polski</option>
-                  <option value="fa-IR">فارسی</option>
-                  <option value="ur-PK">اردو</option>
-                  <option value="ms-MY">Bahasa Melayu</option>
-                  <option value="ar">العربية</option>
-                  <option value="zh-CN">简体中文</option>
-                  <option value="zh-TW">繁體中文</option>
-                  <option value="bn-BD">বাংলা (বাংলাদেশ)</option>
-                  <option value="th-TH">ไทย (ประเทศไทย)</option>
-                  <option value="fil-PH">Filipino (Pilipinas)</option>
-                  <option value="ja">日本語</option>
-                  <option value="ko">한국어</option>
-                  <option value="vi">Tiếng Việt</option>
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
                 </select>
               </label>
             </div>

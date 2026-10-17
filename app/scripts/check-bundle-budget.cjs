@@ -155,7 +155,7 @@ const expectedCatalogs = fs.readdirSync(path.join(appRoot, 'src/i18n/locales'))
   .filter(file => file.endsWith('.json'));
 const dictionaries = localeData.filter(asset => /^assets\/translation-keys-[^/]+\.json$/.test(asset.file));
 const catalogs = localeData.filter(asset => !dictionaries.includes(asset));
-const packedCatalogs = catalogs.filter(asset => JSON.parse(fs.readFileSync(path.join(distRoot, asset.file), 'utf8')).format === 'td-locale-v1');
+const packedCatalogs = catalogs.filter(asset => JSON.parse(fs.readFileSync(path.join(distRoot, asset.file), 'utf8')).format === 'td-locale-v2');
 if (catalogs.length !== expectedCatalogs.length) {
   fail(`Expected ${expectedCatalogs.length} locally bundled language catalogs, found ${catalogs.length}.`);
 }
@@ -183,11 +183,25 @@ if (packedCatalogs.length && dictionaries.length === 1) {
       const matching = packedCatalogs.filter(asset => path.basename(asset.file).startsWith(filename.slice(0, -5) + '-'));
       if (matching.length !== 1) { fail(`Packed canonical language ${filename} resolved to ${matching.length} assets.`); continue; }
       const packet = JSON.parse(fs.readFileSync(path.join(distRoot, matching[0].file), 'utf8'));
-      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== table.keys.length || packet.values.some(value => value !== null && typeof value !== 'string')) {
+      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== table.keys.length) {
         fail(`Packed canonical language ${filename} has an invalid shape.`); continue;
       }
       const source = flatten(JSON.parse(fs.readFileSync(path.join(appRoot, 'src/i18n/locales', filename), 'utf8')));
-      const actual = Object.fromEntries(table.keys.flatMap((key, index) => packet.values[index] === null ? [] : [[key, packet.values[index]]]));
+      const values = [];
+      let invalid = false;
+      for (const value of packet.values) {
+        if (typeof value === 'number') {
+          if (!Number.isInteger(value) || value < 0 || value >= values.length || typeof values[value] !== 'string') { invalid = true; break; }
+          values.push(values[value]);
+        } else if (Array.isArray(value)) {
+          const [reference, prefix, suffix] = value;
+          if (value.length !== 3 || !Number.isInteger(reference) || reference < 0 || reference >= values.length || typeof values[reference] !== 'string' || !Number.isInteger(prefix) || prefix < 0 || prefix > values[reference].length || typeof suffix !== 'string') { invalid = true; break; }
+          values.push(values[reference].slice(0, prefix) + suffix);
+        } else if (value === null || typeof value === 'string') values.push(value);
+        else { invalid = true; break; }
+      }
+      if (invalid) { fail(`Packed canonical language ${filename} has invalid references.`); continue; }
+      const actual = Object.fromEntries(table.keys.flatMap((key, index) => values[index] === null ? [] : [[key, values[index]]]));
       if (Object.keys(source).length !== Object.keys(actual).length || Object.entries(source).some(([key, value]) => actual[key] !== value)) {
         fail(`Packed canonical language ${filename} differs from its source.`);
       }

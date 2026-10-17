@@ -81,6 +81,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
         try {
             const status = await invoke<VaultStatus>('cmd_get_vault_status');
             setVaultStatus(status);
+            if (status.is_unlocked) window.dispatchEvent(new Event('file-notes-unlocked'));
         } catch {
             setVaultStatus(null);
         }
@@ -161,6 +162,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
         let cancelled = false;
         let unlisten: (() => void) | undefined;
         listen('vault-locked', () => {
+            window.dispatchEvent(new Event('file-notes-revoke'));
             if (!cancelled) void refreshVaultStatus();
         }).then(dispose => {
             if (cancelled) dispose();
@@ -181,6 +183,7 @@ export function EncryptionProvider({ children }: { children: ReactNode }) {
     }, [refreshVaultStatus]);
 
     const lockVault = useCallback(async () => {
+        window.dispatchEvent(new Event('file-notes-revoke'));
         await invoke('cmd_lock_vault');
         await refreshVaultStatus();
     }, [refreshVaultStatus]);

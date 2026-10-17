@@ -1419,7 +1419,8 @@ impl Driver {
         match command.as_str() {
             "notes_save" | "notes_read" | "notes_export" | "notes_import"
             | "notes_prepare_move" | "notes_finish_move" | "notes_alias" | "notes_delete"
-            | "notes_export_file" | "notes_import_file" => self.dispatch_notes(request).await,
+            | "notes_export_file" | "notes_import_file" | "notes_authorize"
+            | "notes_secure_save" | "notes_secure_read" => self.dispatch_notes(request).await,
             "notifications_start"
             | "notification_language"
             | "notification_tray"
@@ -1591,6 +1592,7 @@ impl Driver {
             | "video_upload_finish"
             | "upload_resumable"
             | "multipart_upload"
+            | "multipart_notes"
             | "multipart_policy"
             | "multipart_recovery"
             | "multipart_cleanup"
@@ -1614,6 +1616,39 @@ impl Driver {
     async fn dispatch_notes(&mut self, request: Value) -> Result<Value, String> {
         let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;
         match text(&request, "command")? {
+            "notes_authorize" => {
+                let bytes =
+                    std::fs::read(child(&self.root, text(&request, "path")?)?).map_err(error)?;
+                let parsed = crypto::envelope::EnvelopeHeader::parse(&bytes).map_err(error)?;
+                let header = bytes[..parsed.core.header_length as usize].to_vec();
+                Ok(json!(
+                    crate::notes::access::authorize(
+                        &account,
+                        &self.crypto,
+                        text(&request, "identity")?.into(),
+                        text(&request, "alias")?.into(),
+                        header,
+                        None
+                    )
+                    .await?
+                ))
+            }
+            "notes_secure_read" => serde_json::to_value(crate::notes::access::read(
+                &account,
+                &self.crypto,
+                text(&request, "token")?,
+            )?)
+            .map_err(error),
+            "notes_secure_save" => serde_json::to_value(crate::notes::access::save(
+                &account,
+                &self.crypto,
+                text(&request, "token")?,
+                text(&request, "text")?,
+                request["expected"]
+                    .as_i64()
+                    .ok_or("Expected revision required")?,
+            )?)
+            .map_err(error),
             "notes_save" => serde_json::to_value(crate::notes::save_plain(
                 &account,
                 text(&request, "identity")?,
@@ -5376,6 +5411,31 @@ impl Driver {
             passphrase: passphrase.as_ref(),
         };
         match text(request, "command")? {
+            "multipart_notes" => {
+                let id = i32::try_from(request["message"].as_i64().ok_or("Missing message")?)
+                    .map_err(error)?;
+                let (fingerprint, header) =
+                    crate::multipart::notes_material(&transport, id, folder, &credentials).await?;
+                let alias = crate::workspace::store::file_key(folder, i64::from(id));
+                let identity =
+                    crate::notes::identity::resolve(&transport.account, &alias, &fingerprint)?;
+                let token = if let Some(header) = header {
+                    Some(
+                        crate::notes::access::authorize(
+                            &transport.account,
+                            &self.crypto,
+                            identity.clone(),
+                            alias,
+                            header,
+                            passphrase.clone(),
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+                Ok(json!({"identity":identity,"token":token}))
+            }
             "multipart_upload" => {
                 let result = crate::multipart::upload(
                     &transport,

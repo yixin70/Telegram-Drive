@@ -111,8 +111,8 @@ pub fn import(account: &AccountGuard, backup: Backup, policy: &str) -> Result<Im
         return Err("NOTES_INVALID".into());
     }
     let store = super::store::Store::open(account)?;
-    store.backup(account)?;
     store.transaction(account, || {
+        store.backup(account)?;
         let mut result = ImportResult::default();
         for mut record in backup.records {
             if let Some(existing) = store.read(account, &record.identity)? {

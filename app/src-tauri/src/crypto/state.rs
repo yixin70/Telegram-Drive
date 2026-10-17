@@ -130,6 +130,8 @@ impl CryptoState {
     }
 
     fn lock_inner(inner: &mut CryptoStateInner) {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        crate::notes::access::revoke_all();
         inner.revision = inner.revision.wrapping_add(1);
         inner.vault.lock();
         inner.current_session = None;
@@ -464,6 +466,28 @@ impl CryptoState {
                 inner.current_session
             }
         })
+    }
+
+    /// A nonsecret fence for file-scoped authorization, including passphrase-only files.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    pub(crate) fn notes_generation(&self) -> u64 {
+        self.inner
+            .lock()
+            .map(|inner| inner.revision)
+            .unwrap_or(u64::MAX)
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    pub(crate) fn publish_notes_access<T>(
+        &self,
+        generation: u64,
+        publish: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let inner = self.inner.lock().map_err(|_| "NOTES_LOCKED")?;
+        if inner.revision != generation {
+            return Err("NOTES_LOCKED".into());
+        }
+        publish()
     }
 
     fn new_unique_handle<T>(existing: &HashMap<u64, T>) -> u64 {

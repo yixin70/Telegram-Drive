@@ -125,6 +125,23 @@ pub(crate) async fn move_file<T: Transport>(
     }
     let mut manifest = read_manifest(source, id, source_folder, credentials).await?;
     let original = manifest.clone();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let note_move = {
+        let fingerprint = match manifest
+            .parts
+            .first()
+            .and_then(|part| part.envelope.as_ref())
+        {
+            Some(uuid) => format!("multipart:{}:{uuid}", manifest.group),
+            None => format!("multipart:{}", manifest.group),
+        };
+        crate::notes::identity::prepare_move(
+            source.account(),
+            &crate::workspace::store::file_key(source_folder, id.into()),
+            target_folder,
+            &fingerprint,
+        )?
+    };
     for part in &mut manifest.parts {
         source.check()?;
         target.check()?;
@@ -201,6 +218,10 @@ pub(crate) async fn move_file<T: Transport>(
     source.check()?;
     if read_manifest(source, id, source_folder, credentials).await? != original {
         return Err(err("The source changed during the move"));
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let Some(note_move) = note_move {
+        note_move.finish(source.account(), target_folder, commit.id)?;
     }
     delete_inner(source, id, source_folder, credentials).await?;
     Ok(commit.id)

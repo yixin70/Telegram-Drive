@@ -267,6 +267,8 @@ pub fn suspend() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     drop(_sessions);
     crate::local_search::invalidate();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::notes::access::revoke_all();
 }
 
 pub fn resume() {

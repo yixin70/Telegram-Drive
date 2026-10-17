@@ -2,7 +2,7 @@ import {expect,test} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
 import {desktopFixture,nativeCalls} from './desktop-fixture';
 
-for(const locale of ['es','ar','ja'])test(`mobile supporter copy and purchase restoration are localized in ${locale}`,async ({page})=>{
+for(const locale of ['en','es'])test(`mobile supporter copy and purchase restoration are localized in ${locale}`,async ({page})=>{
   const catalog=JSON.parse(await readFile(new URL(`../../src/i18n/locales/${locale}.json`,import.meta.url),'utf8'));
   const copy=catalog.supporter_license;
   await page.setViewportSize({width:390,height:800});
@@ -50,13 +50,14 @@ test('update phases, release notes and crash recovery react to language changes'
  await dialog.getByRole('button',{name:'Continuar',exact:true}).click();
  await page.getByRole('button',{name:'Fail rendering',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Algo salió mal',exact:true})).toBeVisible();
- await page.getByLabel('Fixture language').selectOption('ar');
- await expect(page.getByRole('heading',{name:'حدث خطأ',exact:true})).toBeVisible();
- await expect(page.getByText('جارٍ تثبيت التحديث…',{exact:true})).toBeVisible();
- await expect(page.locator('html')).toHaveAttribute('dir','rtl');
- await page.getByText('تفاصيل تقنية',{exact:true}).click();await expect(page.getByText('Controlled browser render failure',{exact:true})).toBeVisible();
+ const en=JSON.parse(await readFile(new URL('../../src/i18n/locales/en.json',import.meta.url),'utf8'));
+ await page.getByLabel('Fixture language').selectOption('en');
+ await expect(page.getByRole('heading',{name:en.runtime.error_title,exact:true})).toBeVisible();
+ await expect(page.getByText(en.runtime.update_installing,{exact:true})).toBeVisible();
+ await expect(page.locator('html')).toHaveAttribute('dir','ltr');
+ await page.getByText(en.runtime.error_details,{exact:true}).click();await expect(page.getByText('Controlled browser render failure',{exact:true})).toBeVisible();
  expect(await page.evaluate(()=>sessionStorage.getItem('telegram-drive-recovered-session'))).toBe('true');
- await page.getByRole('button',{name:'استعادة الجلسة',exact:true}).click();
+ await page.getByRole('button',{name:en.runtime.error_recover,exact:true}).click();
  await expect(page.getByText('Healthy content',{exact:true})).toBeVisible();
  expect(await nativeCalls(page,'plugin:updater|install')).toHaveLength(0);
  expect(await nativeCalls(page,'cmd_begin_supporter_checkout')).toHaveLength(0);
@@ -135,9 +136,9 @@ test('a loaded desktop language is published to native UI after the application 
  await desktopFixture(page,{settings:{language:'es'}});await page.goto('/');await expect(page.getByRole('group',{name:'Holiday folder photo.jpg',exact:true})).toBeVisible();await expect(page.locator('html')).toHaveAttribute('lang','es');
  await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('es');
  await page.getByRole('button',{name:es.common.preferences,exact:true}).click();await page.getByRole('menu').getByRole('button',{name:es.common.preferences,exact:true}).click();
- await page.getByRole('dialog').getByRole('combobox',{name:es.settings.app_language,exact:true}).selectOption('ar');
- await expect(page.locator('html')).toHaveAttribute('lang','ar');await expect(page.locator('html')).toHaveAttribute('dir','rtl');
- await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('ar');
+ await page.getByRole('dialog').getByRole('combobox',{name:es.settings.app_language,exact:true}).selectOption('en');
+ await expect(page.locator('html')).toHaveAttribute('lang','en');await expect(page.locator('html')).toHaveAttribute('dir','ltr');
+ await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('en');
  expect(await nativeCalls(page,'cmd_begin_supporter_checkout')).toHaveLength(0);
 });
 

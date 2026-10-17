@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-for (const locale of ['en', 'de', 'ar', 'ja', 'hi']) {
+for (const locale of ['en', 'es']) {
   test(`weekly offer is centered, readable, and dismissible in ${locale}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 700 });
     await page.goto(`/?a11y-fixture=supporter&locale=${locale}`);
@@ -48,7 +48,7 @@ test('weekly link opens and focuses the existing desktop license section', async
 });
 
 for (const purchase of ['desktop']) {
-  for (const locale of ['es', 'ar', 'ja']) {
+  for (const locale of ['en', 'es']) {
     test(`${purchase} purchase explanation fits in ${locale}`, async ({ page }) => {
       await page.setViewportSize({ width: purchase === 'desktop' ? 1000 : 390, height: 800 });
       await page.goto(`/?a11y-fixture=supporter&purchase=${purchase}&locale=${locale}`);

@@ -42,7 +42,7 @@ export function LocalizationArraysBrowserFixture() {
   return (
     <main data-locale-arrays={i18n.language} className="min-h-screen bg-app-canvas p-4 text-app-text">
       <Toaster />
-      <label>Fixture language<select aria-label="Fixture language" value={settings.language} onChange={event => updateSetting('language', event.target.value as SupportedLanguage)}>{['es', 'fr', 'ar'].map(language => <option key={language}>{language}</option>)}</select></label>
+      <label>Fixture language<select aria-label="Fixture language" value={settings.language} onChange={event => updateSetting('language', event.target.value as SupportedLanguage)}>{['es', 'en'].map(language => <option key={language}>{language}</option>)}</select></label>
       <label>Fixture view<select aria-label="Fixture view" value={view} onChange={event => setView(event.target.value)}>{['privacy', 'themes', 'advanced'].map(value => <option key={value}>{value}</option>)}</select></label>
       <label>Fixture protection<select aria-label="Fixture protection" value={state} onChange={event => setState(event.target.value as EncryptionState)}>{['encrypted_unlocked', 'encrypted_locked', 'encrypted_key_missing', 'encrypted_unsupported_version', 'encrypted_corrupt', 'encrypted_verifying'].map(value => <option key={value}>{value}</option>)}</select></label>
       <div data-badge><EncryptionBadge state={state} showLabel /></div>

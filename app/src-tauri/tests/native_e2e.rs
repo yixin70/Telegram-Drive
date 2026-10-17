@@ -218,6 +218,53 @@ fn notes_persist_across_processes_and_keep_account_and_revision_boundaries() {
 }
 
 #[test]
+fn notes_protected_text_authenticates_real_envelopes_and_revokes_on_lock() {
+    let fixture = Fixture::new();
+    fixture.write("video.bin", b"synthetic video bytes");
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"notes fixture vault password"}));
+    app.ok(json!({"command":"fixture_encrypt","source":"video.bin","destination":"video.tdenc"}));
+    let token = app.ok(json!({"command":"notes_authorize","owner":"101","path":"video.tdenc","identity":"protected:123","alias":"9:1"}));
+    app.ok(json!({"command":"notes_secure_save","owner":"101","token":token,"text":"secret notes 日本語","expected":0}));
+    assert_eq!(
+        app.ok(json!({"command":"notes_secure_read","owner":"101","token":token}))["text"],
+        "secret notes 日本語"
+    );
+    let backup = app.ok(json!({"command":"notes_export","owner":"101"}));
+    assert_eq!(backup["records"][0]["payload"]["kind"], "encrypted");
+    assert!(!serde_json::to_string(&backup)
+        .unwrap()
+        .contains("secret notes"));
+    assert!(!fixture
+        .read("notes/notes.db")
+        .windows(b"secret notes".len())
+        .any(|bytes| bytes == b"secret notes"));
+    app.ok(json!({"command":"vault_lock"}));
+    assert!(app
+        .failure(json!({"command":"notes_secure_read","owner":"101","token":token}))
+        .contains("NOTES_LOCKED"));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"vault_unlock","passphrase":"notes fixture vault password"}));
+    let token = app.ok(json!({"command":"notes_authorize","owner":"101","path":"video.tdenc","identity":"protected:123","alias":"9:1"}));
+    assert_eq!(
+        app.ok(json!({"command":"notes_secure_read","owner":"101","token":token}))["text"],
+        "secret notes 日本語"
+    );
+    let mut tampered = backup;
+    let value = tampered["records"][0]["payload"]["ciphertext"][0]
+        .as_u64()
+        .unwrap();
+    tampered["records"][0]["payload"]["ciphertext"][0] = json!(value ^ 1);
+    app.ok(json!({"command":"notes_import","owner":"101","backup":tampered,"policy":"replace"}));
+    assert!(app
+        .failure(json!({"command":"notes_secure_read","owner":"101","token":token}))
+        .contains("NOTES_AUTH"));
+    app.stop();
+}
+
+#[test]
 fn notes_frozen_v1_backup_imports_without_losing_text_or_accepting_unknown_fields() {
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);
@@ -6682,6 +6729,53 @@ fn multipart_full_set_moves_and_interrupted_deletes_recover_in_every_mode() {
 }
 
 #[test]
+fn notes_multipart_credentials_and_verified_moves_keep_the_same_note_after_restart() {
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let fixture = Fixture::new();
+        fixture.write("source.bin", &synthetic_bytes(1024 * 1024 + 19, 71));
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
+        if mode == "passphrase" {
+            assert!(!app.failure(json!({"command":"multipart_notes","message":upload["message"],"filePassphrase":"wrong file password"})).is_empty());
+        }
+        let access = app.ok(json!({"command":"multipart_notes","message":upload["message"],"filePassphrase":"fixture file password"}));
+        if mode == "standard" {
+            app.ok(json!({"command":"notes_save","owner":"101","identity":access["identity"],"alias":format!("4242:{}",upload["message"]),"text":"moving note 日本語","expected":0}));
+        } else {
+            app.ok(json!({"command":"notes_secure_save","owner":"101","token":access["token"],"text":"moving note 日本語","expected":0}));
+        }
+        let moved = app.ok(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password"}));
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        if mode == "vault" {
+            app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+        }
+        // Passphrase and dual-slot notes remain usable without an unlocked vault.
+        let reopened = app.ok(json!({"command":"multipart_notes","message":moved["message"],"folder":9001,"filePassphrase":"fixture file password"}));
+        assert_eq!(reopened["identity"], access["identity"], "{mode}");
+        let note = if mode == "standard" {
+            app.ok(json!({"command":"notes_read","owner":"101","identity":reopened["identity"]}))
+                ["payload"]
+                .clone()
+        } else {
+            app.ok(json!({"command":"notes_secure_read","owner":"101","token":reopened["token"]}))
+        };
+        assert_eq!(note["text"], "moving note 日本語", "{mode}");
+        if mode != "standard" {
+            app.ok(json!({"command":"vault_lock"}));
+            assert!(app
+                .failure(
+                    json!({"command":"notes_secure_read","owner":"101","token":reopened["token"]})
+                )
+                .contains("NOTES_LOCKED"));
+        }
+        app.stop();
+    }
+}
+
+#[test]
 fn multipart_remote_only_recovery_needs_no_upload_journal_or_metadata_cache() {
     for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
         let original = Fixture::new();
@@ -6799,21 +6893,22 @@ async fn share_password_http_negotiates_language_weights_aliases_and_exact_query
         .build()
         .unwrap();
     for (query, accept, expected) in [
-        ("", "fr;q=1,ar;q=0.1", "fr"),
+        ("", "fr;q=1,ar;q=0.1", "en"),
         ("", "en-US;q=0,en-GB;q=1,fr;q=0.5", "en"),
         ("", "es-MX;q=0.1,es-ES;q=0.9,fr;q=0.5", "es"),
         ("", "es;q=0,*;q=1", "en"),
-        ("", "zh;q=0,zh-HK;q=1", "zh-TW"),
-        ("", "ar;q=0,ja;q=0.8", "ja"),
-        ("", "de;q=0.5,es;q=0.5", "de"),
+        ("", "zh;q=0,zh-HK;q=1", "en"),
+        ("", "ar;q=0,ja;q=0.8", "en"),
+        ("", "de;q=0.5,es;q=0.5", "es"),
         ("?notlang=ar", "es", "es"),
-        ("?lang=arabic", "ko", "ko"),
-        ("?lang=zh%2DHant%2DHK", "en", "zh-TW"),
-        ("?lang=ur_PK", "en", "ur-PK"),
-        ("", "in-ID", "id"),
-        ("", "tl-PH", "fil-PH"),
-        ("", "xx;q=1,pt-PT;q=0.7", "pt-BR"),
-        ("", "ar;q=oops,ja;q=0.6", "ja"),
+        ("?lang=arabic", "ko", "en"),
+        ("?lang=zh%2DHant%2DHK", "en", "en"),
+        ("?lang=ur_PK", "en", "en"),
+        ("", "in-ID", "en"),
+        ("", "tl-PH", "en"),
+        ("", "xx;q=1,pt-PT;q=0.7", "en"),
+        ("", "ar;q=oops,ja;q=0.6", "en"),
+        ("?lang=es_MX", "en", "es"),
         ("", "en;q=0,*;q=0.5", "es"),
     ] {
         let response = client
@@ -6842,17 +6937,15 @@ async fn share_password_http_negotiates_language_weights_aliases_and_exact_query
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn share_password_http_renders_all_24_catalogs_and_retains_language_through_verification() {
+async fn share_password_http_renders_supported_catalogs_and_retains_language_through_verification()
+{
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"database"}));
     let db = sqlite::open(fixture.path("shares.db")).unwrap();
     let hash = bcrypt::hash("language journey password", 4).unwrap();
-    let languages = [
-        "en", "es", "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN", "zh-TW", "fr",
-        "it", "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH", "ja", "ko", "vi",
-    ];
+    let languages = ["en", "es"];
     for lang in languages {
         let mut statement = db.prepare("INSERT INTO shared_links(id,owner_id,message_id,file_name,password_hash,created_at) VALUES(?,101,42,'language.pdf',?,1)").unwrap();
         statement
@@ -7082,10 +7175,10 @@ fn desktop_notifications_tray_tracks_saved_and_runtime_language_without_a_transf
     assert_eq!(tray["quit"], "Salir de Telegram Drive");
     assert_eq!(tray["resume_enabled"], true);
     assert_eq!(tray["pause_enabled"], false);
-    app.ok(json!({"command":"notification_language","language":"ar"}));
+    app.ok(json!({"command":"notification_language","language":"en-US"}));
     let tray = app.ok(json!({"command":"notification_tray"}));
-    assert_eq!(tray["status"], "Telegram Drive — المتوقفة مؤقتًا: 1");
-    assert_eq!(tray["quit"], "إنهاء Telegram Drive");
+    assert_eq!(tray["status"], "Telegram Drive — 1 paused");
+    assert_eq!(tray["quit"], "Quit Telegram Drive");
     app.failure(json!({"command":"notification_language","language":"arabic-invalid"}));
     assert_eq!(app.ok(json!({"command":"notification_tray"})), tray);
     assert_eq!(fixture.read("settings.json"), saved);
@@ -7274,6 +7367,31 @@ fn desktop_notifications_preserve_aggregation_foreground_filename_privacy_and_sy
 }
 
 #[test]
+fn retired_native_language_preferences_fall_back_without_overwriting_settings() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    for language in ["ar", "fr", "zh-TW"] {
+        let saved = serde_json::to_vec(&json!({"settings":{"language":language}})).unwrap();
+        fixture.write("settings.json", &saved);
+        app.ok(json!({"command":"notifications_start","systemLanguage":"es-MX"}));
+        assert_eq!(
+            app.ok(json!({"command":"notification_tray"}))["quit"],
+            "Quit Telegram Drive"
+        );
+        assert_eq!(fixture.read("settings.json"), saved);
+        app.failure(json!({"command":"notification_language","language":language}));
+    }
+    fixture.write("settings.json", br#"{"settings":{"language":"system"}}"#);
+    app.ok(json!({"command":"notifications_start","systemLanguage":"es-MX"}));
+    assert_eq!(
+        app.ok(json!({"command":"notification_tray"}))["quit"],
+        "Salir de Telegram Drive"
+    );
+    app.stop();
+}
+
+#[test]
 fn desktop_notifications_render_all_native_catalogs_and_preserve_malformed_or_system_preferences() {
     let fixture = Fixture::new();
     fixture.write(
@@ -7282,10 +7400,7 @@ fn desktop_notifications_render_all_native_catalogs_and_preserve_malformed_or_sy
     );
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
-    let languages = [
-        "en", "es", "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN", "zh-TW", "fr",
-        "it", "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH", "ja", "ko", "vi",
-    ];
+    let languages = ["en", "es"];
     for language in languages {
         app.ok(json!({"command":"save_transfer","job":notification_fixture_job(language)}));
     }
@@ -7318,7 +7433,7 @@ fn desktop_notifications_render_all_native_catalogs_and_preserve_malformed_or_sy
     app.ok(json!({"command":"notifications_start","systemLanguage":"zh_Hant_HK"}));
     assert_eq!(
         app.ok(json!({"command":"notification_tray"}))["quit"],
-        "結束Telegram Drive"
+        "Quit Telegram Drive"
     );
     assert_eq!(fixture.read("settings.json"), b"{malformed");
     let saved = br#"{"settings":{"language":"system"}}"#;
@@ -7326,7 +7441,7 @@ fn desktop_notifications_render_all_native_catalogs_and_preserve_malformed_or_sy
     app.ok(json!({"command":"notifications_start","systemLanguage":"ur_PK"}));
     assert_eq!(
         app.ok(json!({"command":"notification_tray"}))["quit"],
-        "Telegram Drive بند کریں"
+        "Quit Telegram Drive"
     );
     assert_eq!(fixture.read("settings.json"), saved);
     app.stop();

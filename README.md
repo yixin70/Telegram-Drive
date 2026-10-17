@@ -57,7 +57,7 @@ Large local files now use automatic multipart upload and verified download reass
 | **Media** | Image preview, PDF viewing, audio playback, video streaming, thumbnails, and archive tools |
 | **Desktop integrations** | Folder Sync, local REST API, WebDAV, local share links, tray controls, and native notifications |
 | **Privacy** | Local configuration and caches, opt-in crash reporting, loopback-only local servers, and no separate file relay |
-| **Languages** | 24 selectable locales plus automatic system-language selection |
+| **Languages** | English and Spanish only; unsupported saved or system languages fall back to English |
 | **Price** | Every feature is free and this source checkout has no ads; existing supporter licenses and recovery remain supported |
 
 ## Download and install
@@ -107,6 +107,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 ### File management and organization
 
 - Grid and list views with virtualized rendering for large folders.
+- Local per-video notes with immediate hover/focus previews and an explicit editor in both desktop views. Notes live outside the EXE and caches; protected notes are encrypted and readable only after matching file authorization. Settings → Advanced → Local notes provides versioned import/export. See [storage, backups and recovery limits](Docs/LOCAL_NOTES.md).
 - Adjustable file-card sizing from **50% to 200%**.
 - Filename search, persistent sorting, multi-select, range selection, and bulk actions.
 - Upload, download, rename, copy, move, and delete workflows where Telegram permits them.
@@ -159,8 +160,7 @@ Some media depends on operating-system codec support or FFmpeg. Supported protec
 - System, light, dark, and default appearance preferences.
 - Built-in theme presets and a custom-theme editor.
 - Reduced-motion and interface-performance preferences.
-- 24 selectable production locales with locale-aware dates, numbers, file sizes, and transfer rates.
-- Right-to-left document direction and bidirectional-text protections for Arabic, Persian, and Urdu.
+- English and Spanish interfaces with locale-aware dates, numbers, file sizes, and transfer rates.
 - SOCKS5 and HTTP/HTTPS proxy routing with proxy credentials stored in the operating system's secure credential manager.
 - Configurable VPN-oriented timeouts, retries, keep-alive behavior, polling, bandwidth, transfer chunk size, and archive limits.
 - Signed desktop updates on supported self-updating packages; pacman-managed Arch installs open the verified release for package-manager updates.
@@ -254,18 +254,9 @@ Read the complete [Privacy Policy](PRIVACY.md), [WebDAV guide](WEBDAV_GUIDE.md),
 
 ## Languages
 
-Telegram Drive supports a **System** language preference and these 24 selectable locales:
+Telegram Drive supports **English** and **Spanish** only. Settings offers these two languages; an existing **System** preference recognizes English and Spanish regional locales and otherwise uses English. Saved preferences for retired languages also fall back to English without resetting unrelated settings.
 
-| | | | |
-| --- | --- | --- | --- |
-| English | Spanish | Russian | Ukrainian |
-| Polish | Persian | Urdu | Malay |
-| Simplified Chinese | Traditional Chinese | French | Italian |
-| Arabic | Brazilian Portuguese | German | Hindi |
-| Bengali (Bangladesh) | Indonesian | Filipino (Philippines) | Turkish |
-| Thai (Thailand) | Japanese | Korean | Vietnamese |
-
-Locale selection and formatting are production-supported. Authentication, encryption, desktop supporter copy and visible data arrays use canonical translations, and the eleven large locales have zero copied-English findings. Mobile follow-up changes remain local under the owner’s pre-commit hook. Noncritical English copy and full native-language, legal-copy, RTL, long-string, CJK and device review remain outstanding; see [the measured locale review](Docs/LOCALIZATION_BUDGET_REVIEW.md).
+The application, native notifications, tray menus, and local share-password pages use the same two-language policy. Spanish grammar, legal-copy, and real-device review remain owner acceptance work; historical localization measurements are retained in [the locale review](Docs/LOCALIZATION_BUDGET_REVIEW.md).
 
 ## Optional $5 lifetime ad-free supporter license
 

@@ -1,5 +1,7 @@
 # P2-08 localization capacity review
 
+> Historical capacity review: current builds support only English and Spanish. Other language catalogs are retired. Existing performance ceilings remain unchanged; this record does not authorize restoring retired languages.
+
 The owner approved two locale-only ceiling increases sized by an exact dry-run encode, with at most 2% temporary headroom and no other budget changes. The target is zero hard-coded supporter, encryption and authentication presentation, translations for the eleven large locales, and visible data arrays. Remaining noncritical standalone copy and native-language acceptance keep broader P2-08 partly done; translations do not hold the tag.
 
 ## Measured capacity

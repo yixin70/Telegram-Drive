@@ -18,7 +18,7 @@ function validate() {
   const invariants = loadInvariantAllowlist();
   const allowKeys = new Set(invariants.keys || []);
   const allowTokens = new Set(invariants.tokens || []);
-  const largeLocales = new Set(['ar', 'de', 'es', 'fr', 'hi', 'id', 'ko', 'pt-BR', 'ru', 'tr', 'zh-CN']);
+  const largeLocales = new Set(['es']);
   function copyExempt(locale, key, value) {
     // Older global exceptions included live Folder Sync prose. These release
     // locales must translate it even while other locales retain that debt.

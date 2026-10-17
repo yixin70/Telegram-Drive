@@ -1,6 +1,6 @@
 import {expect,test} from '@playwright/test';
 import {createServer} from 'node:http';
-import {readFile} from 'node:fs/promises';
+import {readFile,readdir} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -9,7 +9,7 @@ import {desktopFixture,nativeCalls} from './desktop-fixture';
 
 // Serve the actual production artifacts, not Vite's development JSON transform.
 // The native application boundary remains controlled by desktopFixture.
-test('all 24 built language catalogs load losslessly through the real application',async ({browser})=>{
+test('only English and Spanish catalogs ship and load losslessly through the real application',async ({browser})=>{
   test.setTimeout(240_000);
   execFileSync(process.execPath,[resolve(appRoot,'node_modules/vite/bin/vite.js'),'build'],{cwd:appRoot,timeout:120_000,stdio:'pipe'});
   const dist=resolve(appRoot,'dist');
@@ -27,8 +27,16 @@ test('all 24 built language catalogs load losslessly through the real applicatio
   await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));
   const address=server.address();if(!address||typeof address==='string')throw new Error('Missing production server port');
   const origin=`http://127.0.0.1:${address.port}`;
-  const languages=['en','ar','bn-BD','de','es','fa-IR','fil-PH','fr','hi','id','it','ja','ko','ms-MY','pl-PL','pt-BR','ru','th-TH','tr','uk-UA','ur-PK','vi','zh-CN','zh-TW'];
+  const languages=['en','es'];
   try {
+    expect((await readdir(resolve(appRoot,'src/i18n/locales'))).filter(file=>file.endsWith('.json')).sort()).toEqual(['en.json','es.json']);
+    const catalogs=[];
+    for(const file of await readdir(resolve(dist,'assets'))) {
+      if(!file.endsWith('.json'))continue;
+      const packet=JSON.parse(await readFile(resolve(dist,'assets',file),'utf8'));
+      if(packet.format==='td-locale-v2')catalogs.push(packet.language);
+    }
+    expect(catalogs.sort()).toEqual(languages);
     for(const delayed of [/\/assets\/en-[^/]+\.json$/, /\/assets\/translation-keys-[^/]+\.json$/]) {
       const context=await browser.newContext();const page=await context.newPage();page.setDefaultTimeout(10_000);
       let release!:()=>void;const gate=new Promise<void>(done=>{release=done;});let requested=false;
@@ -74,6 +82,18 @@ test('all 24 built language catalogs load losslessly through the real applicatio
         await expect(page.getByRole('button',{name:'Preferences',exact:true})).toBeVisible();
       } finally {release();await context.close();}
     }
+    for(const invalid of [0, [0, 999999, 'suffix'], [-1, 0, 'suffix']]) {
+      const context=await browser.newContext();const page=await context.newPage();
+      try {
+        await page.route(/\/assets\/en-[^/]+\.json$/,async route=>{
+          const response=await route.fetch();const packet=await response.json();packet.values[0]=invalid;
+          await route.fulfill({response,body:JSON.stringify(packet)});
+        });
+        await desktopFixture(page);await page.goto(origin);
+        await expect(page.locator('[data-language-bootstrap="error"]')).toBeVisible();
+        expect(await nativeCalls(page,'cmd_get_supporter_status')).toHaveLength(0);
+      } finally {await context.close();}
+    }
     for(const language of languages) {
       const context=await browser.newContext();const page=await context.newPage();page.setDefaultTimeout(10_000);
       try {
@@ -90,21 +110,27 @@ test('all 24 built language catalogs load losslessly through the real applicatio
         await expect(page.getByRole('dialog')).toBeVisible();
         await expect(page.getByRole('dialog').getByRole('button',{name:catalog.settings.tab_encryption,exact:true})).toBeVisible();
         {
-          await expect.poll(()=>packets.filter(packet=>packet.format==='td-locale-v1').length).toBe(language==='en'?1:2);
+           await expect.poll(()=>packets.filter(packet=>packet.format==='td-locale-v2').length).toBe(language==='en'?1:2);
           const keys=packets.find(packet=>packet.format==='td-keys-v1');expect(keys).toBeTruthy();
-          const packed=packets.find(packet=>packet.format==='td-locale-v1'&&packet.language===language);expect(packed.id).toBe(keys.id);
+           const packed=packets.find(packet=>packet.format==='td-locale-v2'&&packet.language===language);expect(packed.id).toBe(keys.id);
           const flat:Record<string,string>={};
           const flatten=(value:Record<string,unknown>,prefix='')=>{for(const [name,entry]of Object.entries(value)){const key=prefix?prefix+'.'+name:name;if(typeof entry==='string')flat[key]=entry;else flatten(entry as Record<string,unknown>,key);}};
           flatten(catalog);
-          const unpacked=Object.fromEntries(keys.keys.flatMap((key:string,index:number)=>packed.values[index]===null?[]:[[key,packed.values[index]]]));
+           const values: (string|null)[]=[];
+           for(const [index,value] of packed.values.entries()) {
+              if(typeof value==='number') {expect(Number.isInteger(value)&&value>=0&&value<index).toBe(true);expect(typeof values[value]).toBe('string');values.push(values[value]);}
+              else if(Array.isArray(value)) {const [reference,prefix,suffix]=value;expect(reference>=0&&reference<index&&prefix>=0&&prefix<=values[reference]!.length).toBe(true);values.push(values[reference]!.slice(0,prefix)+suffix);}
+             else values.push(value);
+           }
+           const unpacked=Object.fromEntries(keys.keys.flatMap((key:string,index:number)=>values[index]===null?[]:[[key,values[index]]]));
           expect(unpacked).toEqual(flat);
         }
       } finally {await context.close();}
     }
     const context=await browser.newContext();const page=await context.newPage();page.setDefaultTimeout(10_000);
     try {
-      const arabic=JSON.parse(await readFile(resolve(appRoot,'src/i18n/locales/ar.json'),'utf8'));
-      const resource=/\/assets\/ar-[^/]+\.json$/;
+      const spanish=JSON.parse(await readFile(resolve(appRoot,'src/i18n/locales/es.json'),'utf8'));
+      const resource=/\/assets\/es-[^/]+\.json$/;
       let delivered=false;
       await page.route(resource,async route=>{
         const response=await route.fetch();const packet=await response.json();delete packet.format;
@@ -114,17 +140,17 @@ test('all 24 built language catalogs load losslessly through the real applicatio
       await page.getByRole('button',{name:'Preferences',exact:true}).click();
       await page.getByRole('menu').getByRole('button',{name:'Preferences',exact:true}).click();
       const choice=page.getByRole('combobox',{name:'Application Language',exact:true});
-      await choice.selectOption('ar');
+      await choice.selectOption('es');
       await expect.poll(()=>delivered).toBe(true);await page.waitForLoadState('networkidle');
       // An invalid resource must not publish a partial bundle or hide the usable language.
       await expect(page.getByRole('button',{name:'Preferences',exact:true})).toBeVisible();
       await expect(page.locator('html')).toHaveAttribute('lang','en');
-      expect((await nativeCalls(page,'cmd_set_native_language')).some(call=>call.args.language==='ar')).toBe(false);
+      expect((await nativeCalls(page,'cmd_set_native_language')).some(call=>call.args.language==='es')).toBe(false);
       await page.unroute(resource);
       await choice.selectOption('en');await expect(page.locator('html')).toHaveAttribute('lang','en');
-      await choice.selectOption('ar');
-      await expect(page.getByRole('button',{name:arabic.common.preferences,exact:true})).toBeVisible();
-      await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('ar');
+      await choice.selectOption('es');
+      await expect(page.getByRole('button',{name:spanish.common.preferences,exact:true})).toBeVisible();
+      await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('es');
     } finally {await context.close();}
   } finally {await new Promise<void>((done,reject)=>server.close(error=>error?reject(error):done()));}
 });

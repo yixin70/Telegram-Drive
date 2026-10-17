@@ -13,6 +13,8 @@ import { Skeleton } from '../../ui';
 import { EncryptionBadge } from '../../shared/EncryptionBadge';
 import { describeFileActions } from './fileActionDescriptors';
 import i18n from '../../../i18n';
+import {FileNoteButton} from './FileNoteButton';
+import {CachedQualityBadges} from '../../shared/CachedQualityBadges';
 
 interface FileCardProps {
     file: TelegramFile;
@@ -78,7 +80,6 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
         sourceFolderId,
         file.name,
     );
-    const cachedQualities = (cachedVariants || []).filter(v => v.available).map(v => v.quality);
 
     return (
         <div
@@ -152,19 +153,11 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
                         <p className={`shrink-0 text-metadata ${thumbnail ? 'text-white/70' : 'text-app-text-secondary'}`}>{file.sizeStr}</p>
                         <EncryptionBadge state={file.encryption_state ?? 'plain'} className="shrink-0" />
                         <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
-                        {cachedQualities.length > 0 && (
-                            <span className="inline-flex min-w-0 items-center gap-0.5 overflow-hidden">
-                                {cachedQualities.map(q => (
-                                    <span key={q} className="inline-flex items-center gap-0.5 rounded bg-emerald-500/10 px-1 py-0.5 text-badge font-medium text-emerald-400">
-                                        <Check className="h-2.5 w-2.5" />
-                                        {q}
-                                    </span>
-                                ))}
-                            </span>
-                        )}
+                        <CachedQualityBadges variants={cachedVariants} className="inline-flex min-w-0 items-center gap-0.5 overflow-hidden" />
                     </div>
                 </div>
 
+                {!isFolder && <FileNoteButton file={file} activeFolderId={activeFolderId} card />}
                 {/* Quick actions on hover */}
                 <div className="file-card-actions absolute end-2 top-2 z-10 flex max-w-[calc(100%-2.75rem)] gap-0.5 overflow-hidden rounded-control border border-white/10 bg-black/55 p-0.5 opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     <button type="button" aria-label={i18n.t('common.action_name',{action:i18n.t('files.preview'),name:file.name})} onClick={(e) => { e.stopPropagation(); if (onPreview) onPreview() }} className="quiet-control file-action-btn flex h-7 w-7 items-center justify-center text-white/80 hover:text-white" title={i18n.t("files.preview")}>

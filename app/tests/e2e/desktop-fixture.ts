@@ -7,6 +7,7 @@ export async function desktopFixture(page: Page, options: {
   pickedUploadPaths?: string[];
   accountFailures?: number;
   holdFiles?: boolean;
+  holdNotes?: boolean;
   holdStartupHealth?: boolean;
   holdSupporter?: boolean;
   supporterState?: 'active' | 'needs_refresh' | 'expired' | 'inactive';
@@ -61,7 +62,12 @@ export async function desktopFixture(page: Page, options: {
     let releaseStartupHealth: (()=>void) | undefined;
     const startupHealthGate=new Promise<void>(resolve=>{releaseStartupHealth=resolve;});
     const savedTransfers = options.persistTransfersAcrossReload ? JSON.parse(sessionStorage.getItem('desktop-e2e-native-transfers') || 'null') : null;
+    let releaseNotes: (() => void) | undefined;
+    const notesGate = new Promise<void>(resolve => {releaseNotes = resolve;});
     const state = {
+      notes: JSON.parse(sessionStorage.getItem('desktop-e2e-native-notes') || '{}') as Record<string, {text: string; revision: number}>,
+      holdNotes: options.holdNotes ?? false, notesSaveFails: false, notesConflict: false, notesBackupFails: false,
+      releaseNotes: () => {state.holdNotes = false; releaseNotes?.();},
       vaultExists:options.vaultState !== undefined && options.vaultState !== 'none',
       vaultUnlockFails: false, holdVaultUnlock: false,
       releaseVaultUnlock: () => { state.holdVaultUnlock = false; releaseVaultUnlock?.(); },
@@ -154,6 +160,34 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_workspace_account') {
             if (state.accountFailures-- > 0) throw new Error('ACCOUNT_UNAVAILABLE: Session temporarily busy');
             return state.owner;
+          }
+          if (command === 'cmd_file_notes') {
+            const owner = state.owner;
+            if (args.ownerId !== owner) throw new Error('ACCOUNT_CHANGED');
+            const locations = args.locations ?? [{folderId: 9, messageId: 42}];
+            const rows = locations.map((location: any) => {
+              const key = `${location.folderId ?? 'saved'}:${location.messageId}`, storageKey = `${owner}:${key}`;
+              if (options.protectedVideo && state.vaultLocked && !args.promptToken) return {key, state: 'locked', protected: true};
+              const value = state.notes[storageKey] ?? {text: '', revision: 0};
+              if (['save', 'delete'].includes(args.action)) {
+                if (state.notesSaveFails) throw new Error('NOTES_STORAGE');
+                if (state.notesConflict || value.revision !== args.expected) throw new Error('NOTES_CONFLICT');
+                state.notes[storageKey] = args.action === 'delete' ? {text: '', revision: 0} : {text: args.text, revision: value.revision + 1};
+                sessionStorage.setItem('desktop-e2e-native-notes', JSON.stringify(state.notes));
+              }
+              return {key, state: 'ready', protected: !!options.protectedVideo, ...(options.protectedVideo ? {token: 'controlled-notes-token', expiresAt: Date.now() + 900000} : {}), ...(state.notes[storageKey] ?? value)};
+            });
+            if (state.holdNotes) await notesGate;
+            return args.token ? {text: rows[0].text, revision: rows[0].revision} : rows;
+          }
+          if (command === 'cmd_stage_file_passphrase') return 1234;
+          if (command === 'cmd_notes_backup') {
+            if (args.ownerId !== state.owner) throw new Error('ACCOUNT_CHANGED');
+            if (state.notesBackupFails) throw new Error('NOTES_INVALID');
+            if (args.action === 'info') return {path: 'C:\\synthetic\\app-data\\notes'};
+            if (args.action === 'preview') return {token: 'fixture-notes-import', records: 1, conflicts: 1};
+            if (args.action === 'import') return {added: 0, replaced: 1, unchanged: 0};
+            return true;
           }
           if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return [{ id: 9, name: 'Photos', file_count: 1 }];
           // Folder Sync: settings and mappings are kept by this fixture; the

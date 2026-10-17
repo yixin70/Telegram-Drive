@@ -2093,6 +2093,18 @@ fn initialize_tdenc2_decryptor_with_kind(
     prompt_passphrase: Option<&SecretBytes>,
 ) -> Result<(crate::crypto::envelope::decrypt_reader::DecryptReader, bool), String> {
     use crate::crypto::envelope::decrypt_reader::DecryptReader;
+    let (dek, used_vault) = authenticated_file_dek(header_bytes, vault_key, prompt_passphrase)?;
+    DecryptReader::new(header_bytes, dek)
+        .map(|reader| (reader, used_vault))
+        .map_err(|e| e.to_string())
+}
+
+/// Native-only key resolution; metadata authentication precedes key use.
+pub(crate) fn authenticated_file_dek(
+    header_bytes: &[u8],
+    vault_key: Option<&SecretKey>,
+    prompt_passphrase: Option<&SecretBytes>,
+) -> Result<(SecretKey, bool), String> {
     use crate::crypto::envelope::header::EnvelopeHeader;
     use crate::crypto::envelope::key_slot::unwrap_dek;
 
@@ -2147,8 +2159,12 @@ fn initialize_tdenc2_decryptor_with_kind(
         ) else {
             continue;
         };
-        return DecryptReader::new(header_bytes, dek)
-            .map(|reader| (reader, slot.kind == policy::SlotKind::Vault as u8))
+        return header
+            .verify_and_decrypt_metadata(&dek)
+            .map(|mut metadata| {
+                zeroize::Zeroize::zeroize(&mut metadata);
+                (dek, slot.kind == policy::SlotKind::Vault as u8)
+            })
             .map_err(|error| {
                 format!(
                     "[WRONG_KEY_OR_CORRUPT] Failed to authenticate encrypted header: {}",
@@ -4791,11 +4807,77 @@ pub async fn cmd_move_files(
     for message in selected.iter().flatten() {
         crate::multipart::reject_message(message)?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let mut note_moves = std::collections::HashMap::new();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if account.root.join("notes/notes.db").is_file() {
+        for message in selected.iter().flatten() {
+            let alias = crate::workspace::store::file_key(source_folder_id, message.id().into());
+            if crate::notes::store::Store::open(&account)?
+                .by_alias(&account, &alias)?
+                .is_none()
+            {
+                continue;
+            }
+            if let Some(media @ Media::Document(_)) = message.media() {
+                let Media::Document(document) = &media else {
+                    unreachable!()
+                };
+                let envelope = resolve_remote_envelope(
+                    &account,
+                    &client,
+                    source_folder_id,
+                    message.id(),
+                    &media,
+                    message.text(),
+                )
+                .await?;
+                let fingerprint = match envelope {
+                    Some(envelope) => {
+                        let header = crate::crypto::envelope::EnvelopeHeader::parse(
+                            envelope.header_blob.as_deref().ok_or("NOTES_AUTH")?,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        format!(
+                            "protected:{}",
+                            uuid::Uuid::from_bytes(header.core.file_uuid)
+                        )
+                    }
+                    None => format!("document:{}", document.id()),
+                };
+                if let Some(pending) = crate::notes::identity::prepare_move(
+                    &account,
+                    &alias,
+                    target_folder_id,
+                    &fingerprint,
+                )? {
+                    note_moves.insert(message.id(), pending);
+                }
+            }
+        }
+    }
     let forwarded = client
         .forward_messages(&target_peer, &message_ids, &source_peer)
         .await
         .map_err(|error| format!("Forward failed: {error}"))?;
     verify_forwarded_messages(&message_ids, &forwarded)?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    for (old, forwarded) in message_ids.iter().zip(forwarded.iter()) {
+        if let Some(pending) = note_moves.get(old) {
+            let original = selected
+                .iter()
+                .flatten()
+                .find(|message| message.id() == *old)
+                .ok_or("NOTES_IDENTITY")?;
+            let copied = forwarded.as_ref().ok_or("NOTES_IDENTITY")?;
+            match (original.media(), copied.media()) {
+                (Some(Media::Document(old)), Some(Media::Document(new)))
+                    if old.id() == new.id() => {}
+                _ => return Err("NOTES_IDENTITY".into()),
+            }
+            pending.finish(&account, target_folder_id, copied.id())?;
+        }
+    }
     // An account change after forwarding leaves the verified copies and original
     // files intact. It can never authorize deletion through another session.
     account.validate()?;

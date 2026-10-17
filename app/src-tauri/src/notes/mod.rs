@@ -1,5 +1,8 @@
 //! Durable user content. Never place this database in workspace/cache storage.
+pub(crate) mod access;
 pub mod backup;
+pub mod commands;
+pub(crate) mod identity;
 pub mod store;
 
 use crate::workspace::AccountGuard;
@@ -174,6 +177,7 @@ pub fn save_plain(
             record.aliases.push(alias.into());
         }
         record.payload = Payload::Plain { text };
+        store.release_alias(account, alias, identity)?;
         store.put(account, &record)?;
         Ok(record)
     })

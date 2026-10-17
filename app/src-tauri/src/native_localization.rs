@@ -2,10 +2,7 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-pub const LANGUAGES: &[&str] = &[
-    "en", "es", "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN", "zh-TW", "fr", "it",
-    "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH", "ja", "ko", "vi",
-];
+pub const LANGUAGES: &[&str] = &["en", "es"];
 
 pub fn canonical_language(input: &str) -> Option<&'static str> {
     if input.len() > 64 {
@@ -18,40 +15,7 @@ pub fn canonical_language(input: &str) -> Option<&'static str> {
     {
         return None;
     }
-    let aliases: &[(&str, &str)] = &[
-        ("zh-hant", "zh-TW"),
-        ("zh-tw", "zh-TW"),
-        ("zh-hk", "zh-TW"),
-        ("zh-mo", "zh-TW"),
-        ("zh-hans", "zh-CN"),
-        ("zh-cn", "zh-CN"),
-        ("zh-sg", "zh-CN"),
-        ("zh", "zh-CN"),
-        ("en", "en"),
-        ("es", "es"),
-        ("ru", "ru"),
-        ("uk", "uk-UA"),
-        ("pl", "pl-PL"),
-        ("fa", "fa-IR"),
-        ("ur", "ur-PK"),
-        ("ms", "ms-MY"),
-        ("fr", "fr"),
-        ("it", "it"),
-        ("ar", "ar"),
-        ("pt", "pt-BR"),
-        ("de", "de"),
-        ("hi", "hi"),
-        ("bn", "bn-BD"),
-        ("id", "id"),
-        ("in", "id"),
-        ("fil", "fil-PH"),
-        ("tl", "fil-PH"),
-        ("tr", "tr"),
-        ("th", "th-TH"),
-        ("ja", "ja"),
-        ("ko", "ko"),
-        ("vi", "vi"),
-    ];
+    let aliases: &[(&str, &str)] = &[("en", "en"), ("es", "es")];
     aliases
         .iter()
         .find(|(alias, _)| {
@@ -63,12 +27,8 @@ pub fn canonical_language(input: &str) -> Option<&'static str> {
         .map(|(_, language)| *language)
 }
 
-pub fn direction(language: &str) -> &'static str {
-    if ["ar", "fa-IR", "ur-PK"].contains(&language) {
-        "rtl"
-    } else {
-        "ltr"
-    }
+pub fn direction(_language: &str) -> &'static str {
+    "ltr"
 }
 
 type Catalogs = BTreeMap<String, BTreeMap<String, String>>;
@@ -104,7 +64,15 @@ impl NativeLanguageState {
                 .get("settings")?
                 .get("language")?
                 .as_str()
-                .and_then(canonical_language)
+                .and_then(|language| {
+                    if language == "system" {
+                        None
+                    } else {
+                        // Retired explicit preferences must not unexpectedly adopt
+                        // another language from the operating system.
+                        Some(canonical_language(language).unwrap_or("en"))
+                    }
+                })
         })();
         Self(std::sync::RwLock::new(
             preference

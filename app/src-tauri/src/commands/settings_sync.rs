@@ -63,14 +63,7 @@ const STRING_VALUES: &[(&str, &[&str])] = &[
     ("fileSortField", &["name", "size", "date"]),
     ("fileSortDirection", &["asc", "desc"]),
     ("videoUploadMode", &["file", "media"]),
-    (
-        "language",
-        &[
-            "system", "en", "es", "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN",
-            "zh-TW", "fr", "it", "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH",
-            "ja", "ko", "vi",
-        ],
-    ),
+    ("language", &["system", "en", "es"]),
     ("preferredDC", &["auto", "dc1", "dc2", "dc3", "dc4", "dc5"]),
     (
         "encryptionDefaultMode",
@@ -126,6 +119,21 @@ fn sanitize_settings(settings: Value) -> Result<Value, String> {
     let mut safe = Map::new();
 
     for (key, value) in object {
+        // Preserve older encrypted settings backups without re-enabling a
+        // retired interface language or rejecting their unrelated settings.
+        if key == "language"
+            && value.as_str().is_some_and(|language| {
+                [
+                    "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN", "zh-TW", "fr",
+                    "it", "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH", "ja",
+                    "ko", "vi",
+                ]
+                .contains(&language)
+            })
+        {
+            safe.insert(key.clone(), Value::String("en".into()));
+            continue;
+        }
         if BOOLEAN_KEYS.contains(&key.as_str()) {
             if !value.is_boolean() {
                 return Err(format!("Invalid value for synced setting {key}"));

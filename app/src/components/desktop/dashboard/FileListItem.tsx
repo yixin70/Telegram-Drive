@@ -1,7 +1,7 @@
 import {useTranslation} from 'react-i18next';
 import i18n from '../../../i18n';
 import { useCallback } from 'react';
-import { Folder, MoreVertical, Check } from 'lucide-react';
+import { Folder, MoreVertical } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { TelegramFile } from '../../../types';
 import { FileTypeIcon } from '../../shared/FileTypeIcon';
@@ -12,6 +12,8 @@ import { EncryptionBadge } from '../../shared/EncryptionBadge';
 import { describeFileActions } from './fileActionDescriptors';
 import { useFileThumbnail } from '../../../hooks/useFileThumbnail';
 import { isVideoFile } from '../../../utils';
+import {FileNoteButton} from './FileNoteButton';
+import {CachedQualityBadges} from '../../shared/CachedQualityBadges';
 
 
 interface FileListItemProps {
@@ -68,7 +70,6 @@ export function FileListItem({
         file.folder_id ?? null,
         file.name,
     );
-    const cachedQualities = (cachedVariants || []).filter(v => v.available).map(v => v.quality);
 
     return (
         <div
@@ -91,20 +92,14 @@ export function FileListItem({
                     <img src={thumbnail} alt={file.name} className="h-7 w-7 rounded object-cover" onError={forget} />
                 ) : <FileTypeIcon filename={file.name} className="h-4 w-4" />}
             </div>
-            <div className="min-w-0 truncate text-ui font-medium text-app-text">
+            <div className="flex min-w-0 items-center text-ui font-medium text-app-text">
+                <div className="min-w-0 truncate">
                 <span>{file.name}</span>
                 <EncryptionBadge state={file.encryption_state ?? 'plain'} className="ms-1.5 align-middle" />
                 <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
-                {cachedQualities.length > 0 && (
-                    <span className="inline-flex items-center gap-0.5 ml-1.5">
-                        {cachedQualities.map(q => (
-                            <span key={q} className="inline-flex items-center gap-0.5 rounded bg-emerald-500/10 px-1 py-0.5 text-badge font-medium text-emerald-400">
-                                <Check className="w-2.5 h-2.5" />
-                                {q}
-                            </span>
-                        ))}
-                    </span>
-                )}
+                <CachedQualityBadges variants={cachedVariants} className="inline-flex items-center gap-0.5 ml-1.5" />
+                </div>
+                {!isFolder && <FileNoteButton file={file} activeFolderId={activeFolderId} />}
             </div>
             <div className="hidden truncate text-end text-metadata text-app-text-secondary sm:block">{file.sizeStr}</div>
             <div className="hidden truncate text-end font-mono text-metadata text-app-text-tertiary sm:block">{file.created_at || '-'}</div>

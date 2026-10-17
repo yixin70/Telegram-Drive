@@ -18,7 +18,7 @@ export function RuntimeCopyBrowserFixture(){
  });return()=>{live=false;};},[language]);
  if(!ready)return null;
  return <main data-runtime-language={language} className="min-h-screen bg-app-canvas p-4 pt-24 text-app-text">
-  <label>Fixture language<select value={language} onChange={event=>setLanguage(event.target.value)}><option value="es">Español</option><option value="ar">العربية</option><option value="ja">日本語</option></select></label>
+  <label>Fixture language<select value={language} onChange={event=>setLanguage(event.target.value)}><option value="es">Español</option><option value="en">English</option></select></label>
   <button onClick={()=>setFailed(true)}>Fail rendering</button><button onClick={()=>setNotes(true)}>Open release notes</button>
   <button onClick={()=>setPhase('downloading')}>Download phase</button><button onClick={()=>setPhase('verifying')}>Verify phase</button><button onClick={()=>setPhase('installing')}>Install phase</button>
   <UpdateBanner available version="4.0.0" downloading={phase!==null} progress={42} phase={phase} managedByPackageManager={false} onUpdate={()=>setPhase('downloading')} onDismiss={()=>setPhase(null)} />

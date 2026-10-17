@@ -76,10 +76,7 @@ fn build_native_catalogs() {
         .into_iter()
         .map(|key| format!("native_tray.{key}")),
     );
-    let languages = [
-        "en", "es", "ru", "uk-UA", "pl-PL", "fa-IR", "ur-PK", "ms-MY", "zh-CN", "zh-TW", "fr",
-        "it", "ar", "pt-BR", "de", "hi", "bn-BD", "id", "fil-PH", "tr", "th-TH", "ja", "ko", "vi",
-    ];
+    let languages = ["en", "es"];
     let mut catalogs = BTreeMap::new();
     for language in languages {
         let path = directory.join(format!("{language}.json"));

@@ -1,5 +1,39 @@
 # Local video notes
 
+## Using notes
+
+In the desktop file grid or list, hover the notes icon beside a video to read its
+note immediately, or focus the icon with the keyboard. Click or press Enter to
+edit the multiline plain-text note. Save commits locally; Cancel never saves a
+draft. Deleting a note requires confirmation. Notes do not modify Telegram
+captions, filenames or uploaded video bytes, and are not synced to Telegram.
+
+Settings → Advanced → Local notes shows the actual storage directory and provides
+Open Notes Folder, Export Notes and Import Notes. Save exports outside the app's
+data directory for disaster recovery. Choose a **new filename** when exporting:
+existing files are never overwritten. Import first previews the record/conflict
+counts; keeping existing notes is the default, and replacement requires explicit
+confirmation. A verified pre-import database snapshot stays in `notes/backups/`.
+Keep-both alternates and notes whose videos disappeared remain in later exports;
+they are not automatically reattached by a matching filename.
+
+Ordinary notes are readable without a vault. Protected notes require actual
+successful authentication of the matching video envelope, not merely an unlocked
+UI flag. For password-only files, click the generic notes icon and supply the file
+passphrase; vault-backed files can use Unlock vault. No full video download is
+necessary. Access expires after fifteen minutes and is revoked on lock, automatic
+lock, sleep-triggered lock, sign-out or account change. Unlock again to resume.
+Plaintext already seen or copied cannot be recalled or securely erased from all
+browser/OS memory. Losing video/vault credentials can also lose protected notes;
+exporting notes is not a substitute for the existing vault recovery backup.
+
+The stable default storage folder is used; arbitrary live-folder relocation is
+not supported. Initial identity verification needs the current Telegram file or
+authenticated multipart manifest. Once preloaded, hovering never starts a network
+request; a cold preload shows a loading popup immediately. External reuploads and
+moves are not guessed by filename. Verified in-app moves retain notes, while
+copies are separate videos. This first interface is desktop-only.
+
 ## Compatibility contract (version 1)
 
 Notes are user content, not a cache. The stable location is
@@ -83,27 +117,29 @@ clear previews and drafts, reject stale results, and revoke native access.
 
 ## Verification status
 
-**Partial implementation; notes are not available in the app yet.** The native
-storage and backup services are implemented and exercised through the isolated
-child-process harness. This includes restart persistence, account/revision
-boundaries, concurrent first use, durable move-journal primitives, bounded
-import/export, conflict recovery and the frozen plain version-1 backup fixture.
-The harness supplies synthetic identities at the controlled Telegram boundary;
-it does not establish real Telegram identity verification or move integration.
+The implementation includes native media-bound IPC, encrypted file-scoped
+capabilities, move integration, immediate hover/editor UI and Settings controls.
+Browser journeys exercise the real interface through a controlled native
+boundary. Native child-process journeys exercise actual SQLite, envelope/notes
+cryptography, process restart, corruption rejection, account/revision boundaries,
+parallel first use, move-journal recovery, bounded transactional import/export
+and a frozen version-1 backup. The multipart journey uses the production manifest
+and move implementation in all four protection modes with synthetic remote media.
 
-Production IPC, native media binding, protected-note encryption/authorization,
-lock revocation, hover/editor UI and Settings controls are **not implemented**.
-Encrypted payload types currently validate structure only, not authentication;
-they must not be exposed as readable notes or treated as verified file bindings.
-The browser notes regression intentionally remains red until UI implementation.
-
-Run the implemented native journeys from the repository root:
+Run the notes journeys from the repository root and `app/`, respectively:
 
 ```powershell
 cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e notes_ -- --test-threads=1
 ```
 
+```powershell
+npx playwright test tests/e2e/file-notes.spec.ts --workers=1
+```
+
 Browser fixtures do not prove persistence or cryptography. Native tests use
-synthetic accounts and private files, never a personal Telegram session. Full
-native regression, optimized real-WebView IPC, packaged Windows dialogs,
-replaced-EXE persistence and encrypted-video acceptance remain separate checks.
+synthetic accounts and private files, never a personal Telegram session. Native
+identity resolution uses real Telegram message/document IDs in production, but
+live Telegram and installed-app acceptance are not established by controlled
+transports. Packaged Windows file dialogs, replaced-EXE persistence, actual
+encrypted-video acceptance and other OS/device testing remain separate checks.
+No EXE is rebuilt by these tests.

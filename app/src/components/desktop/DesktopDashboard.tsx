@@ -1,6 +1,7 @@
 import { clearImageMemoryCaches } from '../../services/imagePreviewCache';
 import { sourceFolder } from '../../services/fileIdentity';
-import { lazy, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import {NotesAccountContext} from '../../context/NotesAccountContext';
 import { ORGANIZE_FILES_EVENT } from '../../services/workspace';
 import { AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -60,6 +61,7 @@ import { fileQueryKey, invalidateFolderFileQueries, refreshFolderFiles, updateFi
 import { getAdjacentPreview, previewFileKey, samePreviewFile as sameFile } from '../../services/previewNavigation';
 import i18n from '../../i18n';
 
+const LazyNotesHost = lazy(() => import('./dashboard/FileNoteButtonContent').then(module => ({default: module.FileNotesHost})));
 const LazyShareDialog = lazy(() => import('./dashboard/ShareDialog').then(module => ({ default: module.ShareDialog })));
 const LazyPreviewModal = lazy(() => import('./dashboard/PreviewModal').then((module) => ({ default: module.PreviewModal })));
 const LazyMediaPlayer = lazy(() => import('./dashboard/MediaPlayer').then((module) => ({ default: module.MediaPlayer })));
@@ -802,7 +804,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const previewNeighbors = previewNeighborFiles();
 
     return (
-        <DndContext
+        <NotesAccountContext value={accountId}><DndContext
             key={accountId ?? 'signed-out'}
             sensors={dragSensors}
             collisionDetection={closestCenter}
@@ -1213,6 +1215,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     )}
                 </DragOverlay>
             </div>
-        </DndContext>
+            <Suspense><LazyNotesHost /></Suspense>
+        </DndContext></NotesAccountContext>
     );
 }

@@ -22,12 +22,21 @@ export async function unpackCatalog(value:unknown,signal?:AbortSignal,language?:
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid language resource');
   const packed=value as {format?:unknown;id?:unknown;values?:unknown;language?:unknown};
   if(packed.format===undefined&&import.meta.env.DEV)return value as Record<string,unknown>; // Development uses the canonical JSON.
-  if(packed.format!=='td-locale-v1'||packed.language!==language||!Array.isArray(packed.values))throw new Error('Unsupported language resource');
+   if(packed.format!=='td-locale-v2'||packed.language!==language||!Array.isArray(packed.values))throw new Error('Unsupported language resource');
   const table=await keyTable(signal);
   if(packed.id!==table.id||packed.values.length!==table.keys.length)throw new Error('Language key table mismatch');
-  const resource:Record<string,unknown>=Object.create(null);
+   const resource:Record<string,unknown>=Object.create(null);
+   const values:(string|null)[]=[];
   for(let index=0;index<table.keys.length;index++) {
-    const translated=packed.values[index];if(translated===null)continue;
+     const value=packed.values[index];
+     if(typeof value==='number'&&(!Number.isInteger(value)||value<0||value>=index||typeof values[value]!=='string'))throw new Error('Invalid language reference');
+      let translated=typeof value==='number'?values[value]:value;
+      if(Array.isArray(value)) {
+        const [reference,prefix,suffix]=value;
+        if(value.length!==3||!Number.isInteger(reference)||reference<0||reference>=index||typeof values[reference]!=='string'||!Number.isInteger(prefix)||prefix<0||prefix>values[reference]!.length||typeof suffix!=='string')throw new Error('Invalid language prefix');
+        translated=values[reference]!.slice(0,prefix)+suffix;
+      }
+     values.push(translated);if(translated===null)continue;
     if(typeof translated!=='string')throw new Error('Invalid language value');
     const path=table.keys[index].split('.');
     let parent=resource;

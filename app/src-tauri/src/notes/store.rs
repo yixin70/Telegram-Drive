@@ -189,6 +189,25 @@ impl Store {
         Ok(())
     }
 
+    /// Called inside a save transaction after native media verification. Keep
+    /// replaced attachments' text recoverable, but never attach it to new media.
+    pub(super) fn release_alias(
+        &self,
+        account: &AccountGuard,
+        alias: &str,
+        identity: &str,
+    ) -> Result<()> {
+        if let Some(mut previous) = self.by_alias(account, alias)? {
+            if previous.identity != identity {
+                previous.aliases.retain(|old| old != alias);
+                previous.revision = previous.revision.checked_add(1).ok_or("NOTES_LIMIT")?;
+                previous.updated_at = super::now().max(previous.updated_at);
+                self.put(account, &previous)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn by_alias(&self, account: &AccountGuard, alias: &str) -> Result<Option<Record>> {
         account.validate()?;
         let mut query = self
@@ -337,10 +356,21 @@ impl Store {
         let folder = self.root.join("backups");
         std::fs::create_dir_all(&folder).map_err(|_| "NOTES_STORAGE")?;
         let path = folder.join(format!("before-import-{}.db", uuid::Uuid::new_v4()));
-        self.execute(
-            "VACUUM INTO ?",
-            &[Value::String(path.to_string_lossy().into_owned())],
-        )?;
+        // A second read connection lets import hold its writer reservation on
+        // self.db while taking the exact pre-import committed snapshot.
+        let mut source = sqlite::open(self.root.join("notes.db")).map_err(|_| "NOTES_STORAGE")?;
+        source
+            .set_busy_timeout(5_000)
+            .map_err(|_| "NOTES_STORAGE")?;
+        let mut vacuum = source
+            .prepare("VACUUM INTO ?")
+            .map_err(|_| "NOTES_STORAGE")?;
+        vacuum
+            .bind((1, path.to_string_lossy().as_ref()))
+            .map_err(|_| "NOTES_STORAGE")?;
+        vacuum.next().map_err(|_| "NOTES_STORAGE")?;
+        drop(vacuum);
+        drop(source);
         let verify = sqlite::open(&path).map_err(|_| "NOTES_STORAGE")?;
         let mut query = verify
             .prepare("PRAGMA integrity_check")

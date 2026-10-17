@@ -1,5 +1,25 @@
 # End-to-end testing
 
+## Local video notes
+
+`npx playwright test tests/e2e/file-notes.spec.ts --workers=1` from `app/` exercises
+immediate hover/focus, keyboard editing, save/reload, failed writes and drafts,
+lock withdrawal, late-response rejection, and confirmed Settings import/export
+through a controlled IPC boundary. Fixture session storage is only the simulated
+native boundary, not the production persistence mechanism.
+
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e notes_ -- --test-threads=1`
+from the repository root exercises actual native SQLite/backup/envelope services:
+restart and account isolation, revisions, concurrent first use, unknown schema
+preservation, UTF-8/backup limits, transactional collision rollback, idempotent
+restore, a frozen v1 import fixture, file publication, authenticated encrypted
+notes and lock revocation. The multipart notes journey drives the production
+manifest and verified move path in standard, vault, file-passphrase and dual modes
+and reopens notes after process restart. All files/accounts/transports are
+synthetic; native file pickers, replaced-EXE persistence and live Telegram remain
+installed-platform acceptance, not fixture-proven claims. See
+[LOCAL_NOTES.md](Docs/LOCAL_NOTES.md) for the durable format and recovery contract.
+
 Behavioral regression testing uses E2E suites. New tests must exercise an application boundary and a meaningful user or service journey. Isolated function/component assertions, inline Rust unit modules, and Android JVM unit suites are retired. Historical review reports describe the checks available at the time; this document defines the current workflow.
 
 ## Host verification
@@ -152,7 +172,7 @@ The TV native-field exit journey enters controls using arrows, edits text/number
 
 ## Built language resources
 
-The production-catalog browser journey builds real Vite assets and serves them over local HTTP, then starts the actual application in all 24 languages and opens Settings. It compares every decoded catalog value with the canonical JSON source and exercises malformed-resource rejection followed by a language retry through Settings. Native IPC remains controlled by the desktop fixture. Artifact paths are anchored to the test file, so root and app-directory invocations exercise the same build.
+The production-catalog browser journey builds real Vite assets and serves them over local HTTP, verifies that only English and Spanish catalogs ship, then starts the actual application in both languages and opens Settings. It compares every decoded catalog value with the canonical JSON source and exercises malformed-resource rejection followed by a language retry through Settings. The supported-languages journey checks the two-option picker and English fallback for retired saved preferences. Native IPC remains controlled by the desktop fixture. Artifact paths are anchored to the test file, so root and app-directory invocations exercise the same build. Historical 24-language and RTL review entries describe earlier releases, not current language support.
 
 The release-tool suite also runs the locale-validation CLI against temporary catalogs, proving missing required plurals, changed extra-form interpolation and copied-English extra forms are rejected. The bundle CLI counts the shared dictionary, rejects unpacked production resources, missing tables and changed packed values, and retains all route/chunk/locale ceilings. Source catalogs remain ordinary JSON; the distributed arrays are a lossless representation. Every added translation/plural range requiring native review is listed in `Docs/LOCALIZATION_REVIEW.md`.
 

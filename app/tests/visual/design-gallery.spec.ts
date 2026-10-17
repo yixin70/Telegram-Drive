@@ -27,27 +27,28 @@ test('focus treatment remains visible', async ({ page }) => {
   await expect(page.locator('main')).toHaveScreenshot('gallery-keyboard-focus.png', { fullPage: true });
 });
 
-test('Japanese CJK strings fit the narrow locale fixture', async ({ page }) => {
+test('Spanish strings fit the narrow locale fixture', async ({ page }, testInfo) => {
   await page.goto('/?design-gallery&locale-stress');
   await expect(page.getByRole('heading', { name: 'Quiet Utility gallery' })).toBeVisible();
-  await page.getByLabel('Audit language').selectOption('ja');
+  await page.getByLabel('Audit language').selectOption('es');
   const card = page.getByTestId('localized-offline-card');
-  await expect(card).toHaveAttribute('data-language-ready', 'ja');
-  await expect(card).toContainText('オフラインファイル');
-  await expect(card).toContainText('最近開いた暗号化されていないファイル');
+  await expect(card).toHaveAttribute('data-language-ready', 'es');
+  await expect(card).toContainText('Archivos sin conexión');
+  await expect(card).toContainText('Los archivos sin cifrar abiertos recientemente');
   const overflows = await card.evaluate(
     element => element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
   );
-  expect(overflows, 'Japanese locale fixture should not overflow').toBe(false);
-  await expect(card).toHaveScreenshot('gallery-japanese-cjk.png', { maxDiffPixelRatio: 0.04 });
+  expect(overflows, 'Spanish locale fixture should not overflow').toBe(false);
+  await expect(card).toHaveScreenshot('gallery-spanish.png', {maxDiffPixelRatio: 0.04});
+  await card.screenshot({path: testInfo.outputPath('gallery-spanish.png')});
 });
 
-test('new regional language strings fit the narrow locale fixture', async ({ page }) => {
+test('both supported languages fit the narrow locale fixture', async ({ page }) => {
   await page.goto('/?design-gallery&locale-stress');
   await expect(page.getByRole('heading', { name: 'Quiet Utility gallery' })).toBeVisible();
   const card = page.getByTestId('localized-offline-card');
 
-  for (const locale of ['bn-BD', 'th-TH', 'fil-PH', 'zh-TW', 'uk-UA', 'pl-PL', 'fa-IR', 'ur-PK', 'ms-MY']) {
+  for (const locale of ['en', 'es']) {
     await page.getByLabel('Audit language').selectOption(locale);
     await expect(card).toHaveAttribute('data-language-ready', locale);
     await expect(card).toBeVisible();

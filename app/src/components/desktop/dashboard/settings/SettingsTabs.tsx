@@ -19,6 +19,7 @@ import i18n from '../../../../i18n';
 import { LazyFeatureBoundary } from '../../../shared/LazyFeatureBoundary';
 
 const SupporterSettingsSection = lazy(() => import('./SupporterSettingsSection').then(module => ({ default: module.SupporterSettingsSection })));
+const NotesSettingsSection = lazy(() => import('./NotesSettingsSection'));
 
 const tabMotion = {
   initial: { opacity: 0 },
@@ -233,6 +234,7 @@ export function AdvancedSettingsTab({ onOpenApi, onOpenWebDav, onOpenProxy, onOp
     useTranslation();
   return (
     <motion.section key="advanced" {...tabMotion} className="space-y-4">
+      <LazyFeatureBoundary><NotesSettingsSection /></LazyFeatureBoundary>
       <div><h3 className="text-base font-semibold text-app-text">{i18n.t("settings.tab_advanced")}</h3><p className="mt-1 text-sm text-app-text-secondary">Power-user connections are grouped here so everyday settings stay calm and focused. Use the settings search to find any option by name.</p></div>
       <div className="grid gap-3 sm:grid-cols-2">
         {([

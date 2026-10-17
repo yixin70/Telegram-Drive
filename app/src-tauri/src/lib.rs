@@ -1353,6 +1353,10 @@ pub fn run() {
 pub(crate) fn invoke_handler(
 ) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     ipc_dispatch::bounded_handler![
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        notes::commands::cmd_file_notes,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        notes::commands::cmd_notes_backup,
         file_inventory::cmd_touch_file_inventory,
         workspace::storage::cmd_storage_read,
         workspace::storage::cmd_storage_limits,

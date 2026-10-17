@@ -61,7 +61,21 @@ export function localeCatalogPacking():Plugin {
       if(!building||!/[\\/]src[\\/]i18n[\\/]locales[\\/][^\\/]+\.json\?url$/.test(value))return;
       const filename=basename(value.slice(0,-4));
       const catalog=catalogs.get(filename);if(!catalog)throw new Error(`Unregistered language catalog: ${filename}`);
-      const asset=this.emitFile({type:'asset',name:filename,source:JSON.stringify({format:'td-locale-v1',language:filename.slice(0,-5),id,values:keys.map(key=>catalog[key]??null)})});
+       const previousTexts:[number,string][]=[];
+       const values=keys.map((key,index)=>{
+         const text=catalog[key]??null;if(text===null)return null;
+         let best:string|number|[number,number,string]=text;
+         let size=Buffer.byteLength(JSON.stringify(text));
+         for(const [previous,value] of previousTexts) {
+           let prefix=0;while(prefix<value.length&&prefix<text.length&&value[prefix]===text[prefix])prefix++;
+           if(prefix<5)continue;
+           const candidate=prefix===text.length&&prefix===value.length?previous:[previous,prefix,text.slice(prefix)] as [number,number,string];
+           const bytes=Buffer.byteLength(JSON.stringify(candidate));
+           if(bytes<size){best=candidate;size=bytes;}
+         }
+         previousTexts.push([index,text]);return best;
+       });
+       const asset=this.emitFile({type:'asset',name:filename,source:JSON.stringify({format:'td-locale-v2',language:filename.slice(0,-5),id,values})});
       return `export default import.meta.ROLLUP_FILE_URL_${asset};`;
     },
   };

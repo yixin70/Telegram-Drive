@@ -1011,6 +1011,66 @@ pub(crate) async fn read_manifest<T: Transport>(
     Ok(manifest)
 }
 
+/// The manifest key changes on move. Notes bind to the authenticated first
+/// piece header instead; copied pieces retain that key and UUID.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) async fn notes_material<T: Transport>(
+    transport: &T,
+    id: i32,
+    folder: Option<i64>,
+    credentials: &Credentials<'_>,
+) -> Result<(String, Option<Vec<u8>>)> {
+    let manifest = read_manifest(transport, id, folder, credentials).await?;
+    let first = manifest
+        .parts
+        .first()
+        .ok_or_else(|| err("Empty manifest"))?;
+    let actual = checked(transport, transport.lookup(first.remote.id))
+        .await?
+        .ok_or_else(|| err("Missing first piece"))?;
+    if actual != first.remote {
+        return Err(err("First piece identity mismatch"));
+    }
+    let header = if let Some(expected_uuid) = &first.envelope {
+        let (remote, mut reader) = checked(transport, transport.open(first.remote.id)).await?;
+        if remote != first.remote {
+            return Err(err("First piece changed"));
+        }
+        let mut probe = crate::workspace::envelope_cache::HeaderProbe::default();
+        let mut chunk = [0u8; 4096];
+        let header = loop {
+            let count = checked(transport, async {
+                reader.read(&mut chunk).await.map_err(err)
+            })
+            .await?;
+            if count == 0 {
+                return Err(err("Truncated first piece header"));
+            }
+            if let Some(header) = probe.push(&chunk[..count])? {
+                break header;
+            }
+        };
+        let parsed = crate::crypto::envelope::EnvelopeHeader::parse(&header).map_err(err)?;
+        if uuid::Uuid::from_bytes(parsed.core.file_uuid).to_string() != *expected_uuid {
+            return Err(err("First piece UUID mismatch"));
+        }
+        Some(header)
+    } else {
+        None
+    };
+    let fingerprint = if let Some(header) = &header {
+        let parsed = crate::crypto::envelope::EnvelopeHeader::parse(header).map_err(err)?;
+        format!(
+            "multipart:{}:{}",
+            manifest.group,
+            uuid::Uuid::from_bytes(parsed.core.file_uuid)
+        )
+    } else {
+        format!("multipart:{}", manifest.group)
+    };
+    Ok((fingerprint, header))
+}
+
 /// Public envelope structure selects the existing credential prompt; it does
 /// not unlock metadata or establish trust in the manifest's contents.
 pub(crate) async fn protection<T: Transport>(transport: &T, id: i32) -> Result<String> {

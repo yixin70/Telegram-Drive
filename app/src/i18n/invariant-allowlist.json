@@ -65,19 +65,5 @@
     "{{error}}",
     "{{key}}"
   ],
-  "localeKeys": {
-    "it": [
-      "common.proxy",
-      "common.host",
-      "common.password",
-      "settings.tab_proxy",
-      "settings.base_mode",
-      "settings.encryption_mode_standard",
-      "notifications.files_count_one"
-    ],
-    "vi": [
-      "common.proxy",
-      "settings.tab_proxy"
-    ]
-  }
+  "localeKeys": {}
 }
