@@ -177,6 +177,9 @@ impl Transport for Telegram<'_> {
         Ok(())
     }
     fn progress(&self, bytes: u64, total: u64) {
+        self.download_progress(bytes, total, 0);
+    }
+    fn download_progress(&self, bytes: u64, total: u64, speed: u64) {
         self.total.store(total, Ordering::Relaxed);
         if let Some(app) = &self.app {
             if !self.transfer.is_empty() {
@@ -185,7 +188,7 @@ impl Transport for Telegram<'_> {
                 } else {
                     "download-progress"
                 };
-                let _ = app.emit(event, serde_json::json!({"id":self.transfer,"percent":bytes.saturating_mul(100).checked_div(total).unwrap_or(0).min(100),"uploaded_bytes":bytes,"total_bytes":total,"speed_bytes_per_sec":0}));
+                let _ = app.emit(event, serde_json::json!({"id":self.transfer,"percent":bytes.saturating_mul(100).checked_div(total).unwrap_or(0).min(100),"uploaded_bytes":bytes,"total_bytes":total,"speed_bytes_per_sec":speed}));
             }
         }
     }

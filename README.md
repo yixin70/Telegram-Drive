@@ -120,6 +120,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 
 - Durable desktop upload and download queues that recover across window and application restarts.
 - Live per-file upload/download speeds in the desktop Transfers panel, with locale-aware units and a combined network rate. Processing and stopped transfers do not show stale network speeds.
+  Encrypted and multipart download rates measure received transport bytes, including encryption overhead, independently of verified plaintext progress; buffering an authenticated record no longer leaves the rate at zero.
 - Independent upload/download concurrency controls, bandwidth controls, pause, resume, retry, cancel, cooldown, network-waiting, and vault-unlock states.
 - Background operation from the system tray while transfers are active.
 - Native transfer notifications for completion, failure, pause, and attention-required states, with per-category controls.

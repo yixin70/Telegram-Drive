@@ -17,6 +17,7 @@ use crate::resumable_upload::{
     parts_unusable, session_key, ResumableUpload, SourceFingerprint, TelegramSink, UploadError,
     RESUMABLE_FROM_BYTES,
 };
+use crate::transfer_rate::TransferRate;
 use crate::vpn_optimizer::{backoff_ms, NetworkConfig};
 use crate::TelegramState;
 use base64::Engine;
@@ -4195,6 +4196,7 @@ async fn cmd_download_encrypted_file(
 
     let mut download_iter = client.iter_download(&media);
     let mut downloaded_ciphertext = 0u64;
+    let mut download_rate = TransferRate::new();
     let mut header_bytes = Vec::with_capacity(policy::MAX_HEADER_LENGTH);
     let mut expected_header_length: Option<usize> = None;
     let credential = crypto_state.current_credential().ok();
@@ -4271,6 +4273,7 @@ async fn cmd_download_encrypted_file(
         };
         pace_download(&net_config, &transfer_account, &state, &tid, bytes.len()).await?;
         downloaded_ciphertext = downloaded_ciphertext.saturating_add(bytes.len() as u64);
+        let speed = download_rate.record(downloaded_ciphertext);
         if downloaded_ciphertext > ciphertext_size {
             return Err("Encrypted download exceeded its declared size".to_string());
         }
@@ -4426,7 +4429,7 @@ async fn cmd_download_encrypted_file(
                     percent,
                     uploaded_bytes: plaintext_written,
                     total_bytes: total_plaintext,
-                    speed_bytes_per_sec: 0,
+                    speed_bytes_per_sec: speed,
                 },
             );
         }

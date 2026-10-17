@@ -83,6 +83,7 @@ pub mod temp_artifacts;
 mod traffic;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod transfer_engine;
+mod transfer_rate;
 pub mod vpn_optimizer;
 
 use tauri::{Emitter, Manager};

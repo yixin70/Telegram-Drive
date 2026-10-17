@@ -62,6 +62,7 @@ struct MultipartFixture {
     folder: Option<i64>,
     account: AccountGuard,
     bandwidth: Arc<crate::bandwidth::BandwidthManager>,
+    network: Arc<crate::vpn_optimizer::NetworkConfig>,
     crypto: CryptoState,
     session: Option<u64>,
     fail_after: Option<usize>,
@@ -69,6 +70,7 @@ struct MultipartFixture {
     stop_on_progress: Option<String>,
     stopped: std::sync::atomic::AtomicBool,
     progress: std::sync::Mutex<Vec<(u64, u64)>>,
+    download_progress: std::sync::Mutex<Vec<Value>>,
 }
 
 impl MultipartFixture {
@@ -127,6 +129,12 @@ impl crate::multipart::Transport for MultipartFixture {
                 _ => (),
             }
         }
+    }
+    fn download_progress(&self, bytes: u64, total: u64, speed: u64) {
+        self.progress(bytes, total);
+        self.download_progress.lock().unwrap().push(json!({
+            "uploaded_bytes":bytes,"total_bytes":total,"speed_bytes_per_sec":speed
+        }));
     }
     async fn put(
         &self,
@@ -208,6 +216,14 @@ impl crate::multipart::Transport for MultipartFixture {
         let reader = tokio::fs::File::open(directory.join(format!("{id}.bin")))
             .await
             .map_err(error)?;
+        let reader = crate::traffic::Reader::new(
+            reader,
+            crate::traffic::Traffic {
+                account: self.account.clone(),
+                network: self.network.clone(),
+                direction: crate::traffic::Direction::Download,
+            },
+        );
         Ok((remote, Box::new(reader)))
     }
     async fn lookup(&self, id: i32) -> Result<Option<crate::multipart::Remote>, String> {
@@ -489,6 +505,8 @@ async fn fixture_media(
             stop_on_progress: None,
             stopped: Default::default(),
             progress: Default::default(),
+            network: fixture.network.clone(),
+            download_progress: Default::default(),
         };
         return crate::server::build_multipart_media_response(
             &request,
@@ -5258,6 +5276,8 @@ impl Driver {
             stop_on_progress: request["stopOnProgress"].as_str().map(str::to_string),
             stopped: Default::default(),
             progress: Default::default(),
+            network: self.network.clone(),
+            download_progress: Default::default(),
         };
         let credentials = crate::multipart::Credentials {
             mode,
@@ -5297,7 +5317,9 @@ impl Driver {
                         .unwrap_or(download_destination::DownloadCollisionPolicy::Replace),
                 )
                 .await?;
-                Ok(json!(result))
+                let mut result = json!(result);
+                result["progress"] = json!(*transport.download_progress.lock().unwrap());
+                Ok(result)
             }
             "multipart_inspect" => Ok(json!(
                 crate::multipart::read_manifest(
@@ -5335,6 +5357,8 @@ impl Driver {
                     stop_on_progress: None,
                     stopped: Default::default(),
                     progress: Default::default(),
+                    network: self.network.clone(),
+                    download_progress: Default::default(),
                 };
                 let id = crate::multipart::operations::move_file(
                     &transport,

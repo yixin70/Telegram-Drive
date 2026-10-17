@@ -59,6 +59,11 @@ pub(crate) trait Transport: Sync {
     fn bandwidth(&self) -> Arc<BandwidthManager>;
     fn check(&self) -> Result<()>;
     fn progress(&self, _bytes: u64, _total: u64) {}
+    // Logical bytes remain verified plaintext; rate measures received transport
+    // bytes, including TDENC2 overhead. Completion reports a zero network rate.
+    fn download_progress(&self, bytes: u64, total: u64, _speed: u64) {
+        self.progress(bytes, total);
+    }
     fn put(
         &self,
         reader: Reader,
@@ -1054,6 +1059,8 @@ pub(crate) async fn download<T: Transport>(
     let mut file = tokio::fs::File::from_std(file);
     let mut whole = Sha256::new();
     let mut total = 0_u64;
+    let mut received = 0_u64;
+    let mut download_rate = crate::transfer_rate::TransferRate::new();
     for part in &manifest.parts {
         transport.check()?;
         let (remote, reader) = checked(transport, transport.open(part.remote.id)).await?;
@@ -1074,6 +1081,7 @@ pub(crate) async fn download<T: Transport>(
                 return Err(err("Piece protection mode differs from its manifest"));
             }
             consumed = header.len() as u64;
+            received = received.saturating_add(consumed);
             let (decoder, _) = initialize_tdenc2_decryptor_off_worker(
                 &header,
                 credentials.vault,
@@ -1101,6 +1109,8 @@ pub(crate) async fn download<T: Transport>(
                 break;
             }
             consumed += n as u64;
+            received = received.saturating_add(n as u64);
+            let speed = download_rate.record(received);
             if consumed > remote.size {
                 return Err(err("Trailing piece bytes"));
             }
@@ -1117,7 +1127,11 @@ pub(crate) async fn download<T: Transport>(
             whole.update(&plaintext);
             file.write_all(&plaintext).await.map_err(err)?;
             plaintext.zeroize();
-            transport.progress((total + written).min(manifest.length - 1), manifest.length);
+            transport.download_progress(
+                (total + written).min(manifest.length - 1),
+                manifest.length,
+                speed,
+            );
         }
         buffer.zeroize();
         if let Some(decoder) = decoder {
@@ -1153,6 +1167,6 @@ pub(crate) async fn download<T: Transport>(
     )
     .await?;
     cleanup.disarm();
-    transport.progress(manifest.length, manifest.length);
+    transport.download_progress(manifest.length, manifest.length, 0);
     Ok(publication)
 }
