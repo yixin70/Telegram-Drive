@@ -25,6 +25,7 @@ export async function desktopFixture(page: Page, options: {
   heicDecoderMissing?: boolean;
   video?: boolean;
   protectedVideo?: boolean;
+  videoThumbnailUnavailable?: boolean;
   extraPhoto?: boolean;
   holdThumbnails?: boolean;
   encryptionReady?: boolean;
@@ -198,6 +199,7 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_preview' && args.messageId === 77 && options.pdfBase64) return `data:application/pdf;base64,${options.pdfBase64}`;
           if (command === 'cmd_get_stream_info') return { token: 'browser-fixture-token', base_url: `http://localhost:${options.streamingPort ?? 14201}`, operation_token: options.protectedVideo ? '9007199254740993' : null };
           if (command === 'cmd_get_thumbnail' && options.video) {
+            if (options.videoThumbnailUnavailable) throw new Error('THUMBNAIL_UNAVAILABLE');
             const owner = state.owner;
             const color = owner === '101' ? state.thumbnailVersion === 0 ? '#284b63' : '#bb8844' : '#994488';
             if (state.holdThumbnails && owner === '101') await thumbnailGate;

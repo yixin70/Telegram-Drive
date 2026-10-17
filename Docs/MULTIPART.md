@@ -104,8 +104,14 @@ the authenticated loopback `/stream` route while the vault is unlocked (includin
 vault-and-passphrase files opened with their vault slot). MP4 uses the original
 media rather than the unsupported remux/transcoding routes. Codec support still
 depends on the WebView; this does not add transcoding. Standard and passphrase-only
-multipart preview, thumbnails and other preview consumers remain unsupported;
+multipart preview, persistent thumbnails and other preview consumers remain unsupported;
 download the logical file before opening those.
+
+Desktop video cards and list rows can capture a small poster frame from this same
+authenticated stream while unlocked, without FFmpeg. These thumbnails stay in a
+bounded memory-only, account/vault-session-scoped cache. Locking or account changes
+cancel pending capture and clear the cache; no plaintext thumbnail is written to
+disk or uploaded to Telegram. Unsupported codecs retain the ordinary video icon.
 
 Each request authenticates the bounded manifest in its account/folder scope and
 maps HTTP plaintext ranges across pieces. It checks referenced document identity,

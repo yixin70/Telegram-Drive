@@ -1,10 +1,10 @@
 import {useTranslation} from 'react-i18next';
 import { sourceFolder } from '../../../services/fileIdentity';
-import { useCallback, useState, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Folder, Eye, Trash2, Link, Check } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { TelegramFile } from '../../../types';
-import { forgetThumbnail, getCachedThumbnail, loadThumbnail, subscribeImageCache, imageCacheVersion } from '../../../services/imagePreviewCache';
+import { useFileThumbnail } from '../../../hooks/useFileThumbnail';
 import { FileTypeIcon } from '../../shared/FileTypeIcon';
 import { useVideoMetadata } from '../../../hooks/useVideoMetadata';
 import { useCachedVariants } from '../../../hooks/useCachedVariants';
@@ -30,22 +30,15 @@ interface FileCardProps {
     disableDrag?: boolean;
 }
 
-// Check if file is an image type that can have a thumbnail
-function hasThumbnail(filename: string): boolean {
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v'].includes(ext);
-}
-
-
 export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSelected, onClick, onContextMenu, activeFolderId, height, onToggleSelection, selectedIds, disableDrag = false }: FileCardProps) {
     useTranslation();
     const sourceFolderId = sourceFolder(file, activeFolderId ?? null);
-    const thumbnailVersion = useSyncExternalStore(subscribeImageCache, imageCacheVersion, imageCacheVersion);
     const actions = describeFileActions(file);
     const { isFolder } = actions;
-    const [thumbnail, setThumbnail] = useState<string | null>(null);
-    const [thumbnailLoading, setThumbnailLoading] = useState(false);
-    const [thumbnailReady, setThumbnailReady] = useState(false);
+    const { thumbnail, loading: thumbnailLoading, forget } = useFileThumbnail(file, activeFolderId);
+    const [readyThumbnail, setReadyThumbnail] = useState<string | null>(null);
+    const thumbnailReady = thumbnail !== null && readyThumbnail === thumbnail;
+    useEffect(() => { if (!thumbnail) setReadyThumbnail(null); }, [thumbnail]);
     const fileIds = selectedIds?.includes(file.id) ? selectedIds : [file.id];
     const {
         attributes,
@@ -87,30 +80,6 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
     );
     const cachedQualities = (cachedVariants || []).filter(v => v.available).map(v => v.quality);
 
-    // Lazy load thumbnail for image files
-    useEffect(() => {
-        if (isFolder || !hasThumbnail(file.name)) return;
-
-        let cancelled = false;
-        const cached = getCachedThumbnail(file.id, sourceFolderId);
-        setThumbnail(cached);
-        setThumbnailLoading(!cached);
-        setThumbnailReady(Boolean(cached));
-
-        loadThumbnail(file.id, sourceFolderId).then((result) => {
-            if (!cancelled && result) {
-                if (result !== cached) setThumbnailReady(false);
-                setThumbnail(result);
-            }
-        }).catch(() => {
-            // Silently fail - will show icon instead
-        }).finally(() => {
-            if (!cancelled) setThumbnailLoading(false);
-        });
-
-        return () => { cancelled = true; };
-    }, [file, sourceFolderId, isFolder, thumbnailVersion]);
-
     return (
         <div
             ref={setNodeRef}
@@ -140,11 +109,10 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
                             loading="lazy"
                             decoding="async"
                             className={`h-full w-full object-cover transition-opacity duration-300 motion-reduce:transition-none ${thumbnailReady ? 'opacity-100' : 'opacity-0'}`}
-                            onLoad={() => setThumbnailReady(true)}
+                            onLoad={() => setReadyThumbnail(thumbnail)}
                             onError={() => {
-                                forgetThumbnail(file.id, sourceFolderId);
-                                setThumbnail(null);
-                                setThumbnailReady(false);
+                                forget();
+                                setReadyThumbnail(null);
                             }}
                         />
                         {/* Gradient overlay for text readability */}
@@ -154,8 +122,8 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
                     <div className="file-card-icon absolute inset-x-0 bottom-12 top-0 flex items-center justify-center p-3">
                         {isFolder ? (
                             <Folder className="h-10 w-10 max-h-full max-w-full shrink-0 text-app-accent" strokeWidth={1.6} />
-                        ) : thumbnailLoading && hasThumbnail(file.name) ? (
-                            <Skeleton className="h-10 w-10 shrink-0" />
+                        ) : thumbnailLoading ? (
+                            <span data-video-thumbnail-loading><Skeleton className="h-10 w-10 shrink-0" /></span>
                         ) : (
                             <FileTypeIcon filename={file.name} size="lg" className="h-10 w-10 max-h-full max-w-full shrink-0" />
                         )}

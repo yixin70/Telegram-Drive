@@ -10,6 +10,8 @@ import { useCachedVariants } from '../../../hooks/useCachedVariants';
 import { VideoMetaBadge } from '../../shared/VideoMetaBadge';
 import { EncryptionBadge } from '../../shared/EncryptionBadge';
 import { describeFileActions } from './fileActionDescriptors';
+import { useFileThumbnail } from '../../../hooks/useFileThumbnail';
+import { isVideoFile } from '../../../utils';
 
 
 interface FileListItemProps {
@@ -18,13 +20,15 @@ interface FileListItemProps {
     onFileClick: (e: React.MouseEvent, file: TelegramFile) => void;
     handleContextMenu: (e: React.MouseEvent, file: TelegramFile) => void;
     disableDrag?: boolean;
+    activeFolderId?: number | null;
 }
 
 export function FileListItem({
-    file, selectedIds, onFileClick, handleContextMenu, disableDrag = false
+    file, selectedIds, onFileClick, handleContextMenu, disableDrag = false, activeFolderId
 }: FileListItemProps) {
     useTranslation();
     const { isFolder } = describeFileActions(file);
+    const { thumbnail, forget } = useFileThumbnail(file, activeFolderId, isVideoFile(file.name));
     const fileIds = selectedIds.includes(file.id) ? selectedIds : [file.id];
     const {
         attributes,
@@ -83,7 +87,9 @@ export function FileListItem({
             `}
         >
             <div className="flex justify-center">
-                {isFolder ? <Folder className="h-4 w-4 text-app-accent" /> : <FileTypeIcon filename={file.name} className="h-4 w-4" />}
+                {isFolder ? <Folder className="h-4 w-4 text-app-accent" /> : thumbnail ? (
+                    <img src={thumbnail} alt={file.name} className="h-7 w-7 rounded object-cover" onError={forget} />
+                ) : <FileTypeIcon filename={file.name} className="h-4 w-4" />}
             </div>
             <div className="min-w-0 truncate text-ui font-medium text-app-text">
                 <span>{file.name}</span>

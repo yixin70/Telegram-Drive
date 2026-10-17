@@ -2,7 +2,6 @@ import {useTranslation} from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronUp, Download, Pause, Play, RotateCcw, UploadCloud, X } from 'lucide-react';
 import type { DownloadItem, QueueItem } from '../../../types';
-import { formatBytes } from '../../../utils';
 import i18n from '../../../i18n';
 
 interface TransferCenterProps {
@@ -49,6 +48,27 @@ function StatusLabel({ status }: { status: QueueItem['status'] | DownloadItem['s
   return <span className={`text-[10px] font-medium capitalize ${tone}`}>{status}</span>;
 }
 
+// Encryption, verification and paused jobs can retain a previous sample, but
+// that is not current network throughput. Unknown rates are not assumed zero.
+function networkSpeed(item: QueueItem | DownloadItem): number | null {
+  const speed = item.speedBytesPerSec;
+  return (item.status === 'uploading' || item.status === 'downloading')
+    && typeof speed === 'number' && Number.isFinite(speed) && speed >= 0 ? speed : null;
+}
+
+function formatTransferRate(speed: number): string {
+  const units = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log2(Math.max(1, speed)) / 10));
+  return new Intl.NumberFormat(i18n.resolvedLanguage || i18n.language, {
+    style: 'unit', unit: `${units[index]}-per-second`, unitDisplay: 'narrow', maximumFractionDigits: 2,
+  }).format(speed / 1024 ** index);
+}
+
+function TransferSpeed({ item }: { item: QueueItem | DownloadItem }) {
+  const speed = networkSpeed(item);
+  return speed === null ? null : <span className="text-[10px] tabular-nums text-app-text-secondary">{formatTransferRate(speed)}</span>;
+}
+
 export function TransferCenter({
   openRequest = 0,
   uploads,
@@ -80,8 +100,7 @@ export function TransferCenter({
   const pausedDownloads = downloads.filter((item) => item.status === 'paused').length;
   const pausedCount = pausedUploads + pausedDownloads;
   const aggregateSpeed = [...uploads, ...downloads]
-    .filter((item) => ['uploading', 'downloading', 'encrypting', 'decrypting', 'verifying'].includes(item.status))
-    .reduce((sum, item) => sum + (item.speedBytesPerSec || 0), 0);
+    .reduce((sum, item) => sum + (networkSpeed(item) ?? 0), 0);
   const allComplete = activeCount === 0 && pausedCount === 0
     && [...uploads, ...downloads].length > 0
     && [...uploads, ...downloads].every((item) => item.status === 'success')
@@ -95,7 +114,7 @@ export function TransferCenter({
           <h2 className="text-sm font-medium text-app-text">{i18n.t("common.transfers")}</h2>
           <p className="text-[11px] text-app-text-secondary">
             {activeCount > 0
-              ? `${activeCount} active${aggregateSpeed > 0 ? ` · ${formatBytes(aggregateSpeed)}/s` : ''}`
+              ? `${activeCount} active${aggregateSpeed > 0 ? ` · ${formatTransferRate(aggregateSpeed)}` : ''}`
               : pausedCount > 0
                 ? `${pausedCount} paused`
                 : `${uploads.length + downloads.length} complete or stopped`}
@@ -123,7 +142,10 @@ export function TransferCenter({
                     <UploadCloud className="h-4 w-4 shrink-0 text-app-accent" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs text-app-text" title={item.url || item.path}>{(item.url || item.path).split(/[\\/]/).pop()}</p>
-                      <StatusLabel status={item.status} />
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <StatusLabel status={item.status} />
+                        <TransferSpeed item={item} />
+                      </div>
                     </div>
                     {(item.status === 'pending' || item.status === 'paused' || item.status === 'uploading' || item.status === 'downloading' || item.status === 'encrypting' || item.status === 'verifying') && <button type="button" onClick={() => onCancelUpload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-danger" aria-label={`Cancel upload ${item.url || item.path}`} title={i18n.t("common.cancel")}><X className="h-3.5 w-3.5" aria-hidden="true" /></button>}
                     {(item.status === 'error' || item.status === 'cancelled' || item.status === 'waiting_for_unlock') && <button type="button" onClick={() => onRetryUpload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-accent" aria-label={i18n.t('common.action_name', { action: item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t('common.retry'), name: item.url || item.path })} title={item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t("common.retry")}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /></button>}
@@ -150,7 +172,13 @@ export function TransferCenter({
                 <div key={item.id} className="border-t border-app-border-subtle px-4 py-3 first:border-t-0">
                   <div className="flex items-center gap-3">
                     <Download className="h-4 w-4 shrink-0 text-app-info" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-xs text-app-text" title={item.filename}>{item.filename}</p>{item.downloadOutcome === 'skipped' ? <span className="text-[10px] text-app-text-secondary">{i18n.t('downloadCollision.skipped')}</span> : <StatusLabel status={item.status} />}</div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs text-app-text" title={item.filename}>{item.filename}</p>
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        {item.downloadOutcome === 'skipped' ? <span className="text-[10px] text-app-text-secondary">{i18n.t('downloadCollision.skipped')}</span> : <StatusLabel status={item.status} />}
+                        <TransferSpeed item={item} />
+                      </div>
+                    </div>
                     {(item.status === 'pending' || item.status === 'paused' || item.status === 'cooldown' || item.status === 'downloading' || item.status === 'decrypting' || item.status === 'verifying') && <button type="button" onClick={() => onCancelDownload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-danger" aria-label={`Cancel download ${item.filename}`} title={i18n.t("common.cancel")}><X className="h-3.5 w-3.5" aria-hidden="true" /></button>}
                     {(item.status === 'error' || item.status === 'cancelled' || item.status === 'waiting_for_unlock') && <button type="button" onClick={() => onRetryDownload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-accent" aria-label={i18n.t('common.action_name', { action: item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t('common.retry'), name: item.filename })} title={item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t("common.retry")}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /></button>}
                   </div>

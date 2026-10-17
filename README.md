@@ -119,6 +119,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 ### Reliable transfers and desktop operation
 
 - Durable desktop upload and download queues that recover across window and application restarts.
+- Live per-file upload/download speeds in the desktop Transfers panel, with locale-aware units and a combined network rate. Processing and stopped transfers do not show stale network speeds.
 - Independent upload/download concurrency controls, bandwidth controls, pause, resume, retry, cancel, cooldown, network-waiting, and vault-unlock states.
 - Background operation from the system tray while transfers are active.
 - Native transfer notifications for completion, failure, pause, and attention-required states, with per-category controls.
@@ -223,13 +224,15 @@ The encryption design and implementation have **not received an independent secu
 The following operations fail closed for encrypted objects while retaining their normal behavior for standard files:
 
 - In-app encrypted image and archive previews.
-- Encrypted thumbnails, HLS/fMP4 remuxing, and transcoding.
+- Persistent encrypted-file thumbnails, HLS/fMP4 remuxing, and transcoding.
 - Local plaintext share links and REST/local-server plaintext access.
 - WebDAV read, overwrite, rename, move, copy, and delete operations.
 - Remote rename of encrypted Telegram media.
 - Plaintext-to-encrypted migration, decrypt-in-place migration, rekey/slot-management UI, and full format migration.
 
 TDENC2-protected audio, video, and PDF content can stream in supported in-app viewers while the vault is unlocked. The session-scoped credential is revoked when the vault locks, and the app does not publish a persistent plaintext copy. Download and authenticate other encrypted files before opening them in another application.
+
+Desktop video cards and list rows show poster thumbnails, using a decoded frame when no native thumbnail is available. Vault-backed videos (including multipart) use the authenticated stream and a memory-only thumbnail cache that is cleared on lock/account changes. No decrypted thumbnail is saved or uploaded; unsupported codecs keep the video icon.
 
 ## Privacy and security
 

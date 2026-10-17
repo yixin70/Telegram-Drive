@@ -164,6 +164,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         let stop: (() => void) | undefined;
         void listen('vault-locked', () => {
             if (disposed) return;
+            clearImageMemoryCaches();
             fileLoadScopeRef.current.generation++;
             fileLoadSequenceRef.current++;
             setPreviewFile(file => file?.encryption_state === 'encrypted_unlocked' ? null : file);

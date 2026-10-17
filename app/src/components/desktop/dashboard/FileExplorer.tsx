@@ -374,6 +374,7 @@ export function FileExplorer({
                                 >
                                     <FileListItem
                                         file={file}
+                                        activeFolderId={activeFolderId}
                                         selectedIds={selectedIds}
                                         onFileClick={(e, clickedFile) => onFileClick(e, clickedFile, sortedFiles)}
                                         handleContextMenu={handleContextMenu}
