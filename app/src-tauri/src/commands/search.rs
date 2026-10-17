@@ -234,7 +234,8 @@ impl Source for LiveSource {
                     break;
                 }
                 complete &= listing.complete;
-                let mut reader = InventoryMetadataReader::new(account, &client, folder, key);
+                let mut reader =
+                    InventoryMetadataReader::new(&self.0, account, &client, folder, key);
                 let mut folder_rows = Vec::new();
                 let mut candidate_bytes = 0usize;
                 for message in listing.rows.iter() {

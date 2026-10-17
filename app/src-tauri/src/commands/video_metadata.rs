@@ -62,6 +62,7 @@ async fn download_moov_chunk(
         .flatten()
         .next()
         .ok_or_else(|| format!("Message {message_id} not found"))?;
+    crate::multipart::reject_message(&msg)?;
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
     let size = match &media {
         Media::Document(d) => d.size() as u64,

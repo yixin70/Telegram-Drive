@@ -482,8 +482,8 @@ async fn media_server_uses_the_preferred_port_and_falls_back_when_it_is_taken() 
         .build()
         .unwrap();
 
-    // Another process holds the preferred port: the server still starts and
-    // the sponsor page policy names the port that is really listening.
+    // Another process holds the preferred port: the server still starts,
+    // publishes its actual port, and does not restore removed ad routes.
     let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let taken = occupied.local_addr().unwrap().port();
     let fixture = Fixture::new();
@@ -494,19 +494,7 @@ async fn media_server_uses_the_preferred_port_and_falls_back_when_it_is_taken() 
     assert_eq!(started["publishedPort"].as_u64().unwrap(), port);
     let url = started["url"].as_str().unwrap().to_string();
     let banner = client.get(format!("{url}/ad-banner")).send().await.unwrap();
-    assert_eq!(banner.status(), 200);
-    let policy = banner
-        .headers()
-        .get("content-security-policy")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(
-        policy.contains(&format!("http://localhost:{port}/ad-script")),
-        "{policy}"
-    );
-    assert!(!policy.contains(&format!(":{taken}/")), "{policy}");
+    assert_eq!(banner.status(), 404);
     assert_eq!(
         client
             .get(format!("{url}/stream/home/1"))
@@ -5676,6 +5664,400 @@ async fn removed_ad_endpoints_are_not_served_by_the_media_server() {
         assert_eq!(response.status(), 404, "removed ad route {path}");
     }
     app.stop();
+}
+
+// Telegram is a persisted document fixture; splitting, encryption, journals,
+// reassembly and destination publication run in the production backend process.
+#[test]
+fn multipart_files_round_trip_after_restart_in_every_protection_mode() {
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let fixture = Fixture::new();
+        let source = synthetic_bytes(2 * 1024 * 1024 + 91, 83);
+        fixture.write("movie.mp4", &source);
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"movie.mp4",
+            "mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
+        assert_eq!(upload["parts"], 3, "{mode}: {upload}");
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+        app.ok(
+            json!({"command":"multipart_download","message":upload["message"],
+            "destination":"restored.mp4","filePassphrase":"fixture file password"}),
+        );
+        assert_eq!(fixture.read("restored.mp4"), source, "{mode}");
+        let usage = app.ok(json!({"command":"bandwidth_read"}));
+        assert!(usage["up_bytes"].as_u64().unwrap() >= source.len() as u64);
+        assert!(usage["down_bytes"].as_u64().unwrap() >= source.len() as u64);
+        app.stop();
+    }
+}
+
+#[test]
+fn multipart_upload_resumes_confirmed_documents_without_publishing_an_incomplete_file() {
+    let fixture = Fixture::new();
+    let source = synthetic_bytes(2 * 1024 * 1024 + 123, 84);
+    fixture.write("source.bin", &source);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"fixture password"}));
+    assert!(app
+        .failure(json!({"command":"multipart_upload","source":"source.bin",
+        "mode":"vault","objectLimit":1048576,"failAfter":1}))
+        .contains("fixture interruption"));
+    let before = app.ok(json!({"command":"multipart_remote"}));
+    assert_eq!(before["documents"].as_array().unwrap().len(), 1);
+    assert!(before["manifests"].as_array().unwrap().is_empty());
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"vault_unlock","passphrase":"fixture password"}));
+    let finished = app.ok(json!({"command":"multipart_upload","source":"source.bin",
+        "mode":"vault","objectLimit":1048576}));
+    assert_eq!(finished["resumed"], 1);
+    let after = app.ok(json!({"command":"multipart_remote"}));
+    assert_eq!(after["documents"].as_array().unwrap().len(), 4);
+    assert_eq!(after["manifests"].as_array().unwrap().len(), 1);
+    app.ok(json!({"command":"multipart_download","message":finished["message"],"destination":"restored.bin"}));
+    assert_eq!(fixture.read("restored.bin"), source);
+    app.stop();
+}
+
+#[test]
+fn multipart_corruption_missing_parts_and_wrong_keys_never_replace_the_destination() {
+    for fault in [
+        "missing",
+        "corrupt",
+        "swap",
+        "wrong_key",
+        "trailing",
+        "truncated",
+        "manifest",
+    ] {
+        let fixture = Fixture::new();
+        fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 85));
+        fixture.write("destination.bin", b"keep this existing file");
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin",
+            "mode":"passphrase","filePassphrase":"correct fixture password","objectLimit":1048576}));
+        if fault != "wrong_key" {
+            app.ok(json!({"command":"multipart_fault","fault":fault,"message":upload["message"]}));
+        }
+        let failure = app.failure(json!({"command":"multipart_download","message":upload["message"],
+            "destination":"destination.bin","filePassphrase":if fault == "wrong_key" {"wrong fixture password"} else {"correct fixture password"}}));
+        assert!(!failure.is_empty(), "{fault}");
+        assert_eq!(
+            fixture.read("destination.bin"),
+            b"keep this existing file",
+            "{fault}"
+        );
+        assert!(!std::fs::read_dir(&fixture.0).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tdpart")));
+        app.stop();
+    }
+}
+
+#[test]
+fn multipart_source_changes_and_account_changes_cannot_reuse_the_old_set() {
+    let fixture = Fixture::new();
+    fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 86));
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    assert!(app
+        .failure(json!({"command":"multipart_upload","source":"source.bin",
+        "mode":"standard","objectLimit":1048576,"failAfter":1}))
+        .contains("fixture interruption"));
+    fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 87));
+    let uploaded = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":"standard","objectLimit":1048576}));
+    assert_eq!(uploaded["resumed"], 0);
+    app.ok(json!({"command":"seed_account","owner":202}));
+    assert!(!app.failure(json!({"command":"multipart_download","message":uploaded["message"],"destination":"wrong.bin"})).is_empty());
+    assert!(!fixture.path("wrong.bin").exists());
+    app.stop();
+}
+
+#[test]
+fn multipart_uses_real_encryption_overhead_at_the_telegram_boundary() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let policy =
+            app.ok(json!({"command":"multipart_policy","mode":mode,"length":2_000_000_000_u64}));
+        let capacity = policy["capacity"].as_u64().unwrap();
+        assert_eq!(policy["split"], mode != "standard");
+        assert_eq!(
+            app.ok(json!({"command":"multipart_policy","mode":mode,"length":capacity}))["split"],
+            false
+        );
+        assert_eq!(
+            app.ok(json!({"command":"multipart_policy","mode":mode,"length":capacity + 1}))
+                ["split"],
+            true
+        );
+        if mode != "standard" {
+            assert!(capacity < 2_000_000_000);
+            assert_eq!(app.ok(json!({"command":"multipart_policy","mode":mode,"length":capacity,"metadataLength":100}))["split"], true);
+        }
+    }
+    app.stop();
+}
+
+#[test]
+fn multipart_custom_quota_accounts_confirmed_objects_and_releases_failed_holds() {
+    let fixture = Fixture::new();
+    fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 92));
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"bandwidth_set_limit","bytes":1048576}));
+    assert!(app.failure(json!({"command":"multipart_upload","source":"source.bin","mode":"standard","objectLimit":1048576})).contains("limit"));
+    let usage = app.ok(json!({"command":"bandwidth_read"}));
+    assert_eq!(usage["up_bytes"], 1048576);
+    assert!(app.ok(json!({"command":"multipart_remote"}))["manifests"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    app.ok(json!({"command":"bandwidth_set_limit","bytes":8388608}));
+    let uploaded = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":"standard","objectLimit":1048576}));
+    assert_eq!(uploaded["resumed"], 1);
+    app.ok(json!({"command":"multipart_download","message":uploaded["message"],"destination":"restored.bin"}));
+    assert_eq!(fixture.read("restored.bin"), fixture.read("source.bin"));
+    let usage = app.ok(json!({"command":"bandwidth_read"}));
+    assert!(usage["up_bytes"].as_u64().unwrap() < 1100000);
+    app.stop();
+}
+
+#[test]
+fn multipart_progress_cancellation_vault_lock_and_collision_do_not_publish_partial_files() {
+    let fixture = Fixture::new();
+    let bytes = synthetic_bytes(2 * 1024 * 1024 + 33, 97);
+    fixture.write("source.bin", &bytes);
+    fixture.write("destination.bin", b"existing destination");
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+    assert!(app.failure(json!({"command":"multipart_upload","source":"source.bin","mode":"vault","objectLimit":1048576,"stopOnProgress":"cancel"})).contains("cancelled"));
+    assert!(app.ok(json!({"command":"multipart_remote"}))["manifests"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":"vault","objectLimit":1048576}));
+    let progress = upload["progress"].as_array().unwrap();
+    assert!(!progress.is_empty());
+    assert!(progress
+        .windows(2)
+        .all(|w| w[0][0].as_u64().unwrap() <= w[1][0].as_u64().unwrap()));
+    assert_eq!(progress.last().unwrap()[0], bytes.len());
+    assert!(progress[..progress.len() - 1]
+        .iter()
+        .all(|event| event[0].as_u64().unwrap() < bytes.len() as u64));
+    for stop in ["cancel", "vault_lock"] {
+        assert!(!app.failure(json!({"command":"multipart_download","message":upload["message"],"destination":"destination.bin","stopOnProgress":stop})).is_empty());
+        assert_eq!(fixture.read("destination.bin"), b"existing destination");
+        assert!(!std::fs::read_dir(&fixture.0).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tdpart")));
+        if stop == "vault_lock" {
+            app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+        }
+    }
+    let skipped = app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"destination.bin","collisionPolicy":"skip"}));
+    assert_eq!(skipped["outcome"], "skipped");
+    assert_eq!(fixture.read("destination.bin"), b"existing destination");
+    let kept = app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"destination.bin","collisionPolicy":"keep_both"}));
+    assert_eq!(fixture.read("destination.bin"), b"existing destination");
+    assert_eq!(
+        std::fs::read(kept["savePath"].as_str().unwrap()).unwrap(),
+        bytes
+    );
+    app.stop();
+}
+
+#[test]
+fn multipart_explicit_orphan_cleanup_is_account_scoped_and_retryable() {
+    let fixture = Fixture::new();
+    fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 29, 96));
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+    app.failure(json!({"command":"multipart_upload","source":"source.bin","mode":"vault","objectLimit":1048576,"failAfter":1}));
+    let pending = app.ok(json!({"command":"multipart_recovery"}));
+    assert_eq!(pending.as_array().unwrap().len(), 1);
+    let group = pending[0]["group"].clone();
+    app.ok(json!({"command":"seed_account","owner":202}));
+    assert!(app
+        .ok(json!({"command":"multipart_recovery"}))
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!app
+        .failure(json!({"command":"multipart_cleanup","group":group}))
+        .is_empty());
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+    app.failure(json!({"command":"multipart_cleanup","group":group,"failAfter":0}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+    app.ok(json!({"command":"multipart_cleanup","group":group}));
+    assert!(app.ok(json!({"command":"multipart_remote"}))["documents"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(app
+        .ok(json!({"command":"multipart_recovery"}))
+        .as_array()
+        .unwrap()
+        .is_empty());
+    app.stop();
+}
+
+#[test]
+fn multipart_full_set_moves_and_interrupted_deletes_recover_in_every_mode() {
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let fixture = Fixture::new();
+        let bytes = synthetic_bytes(1024 * 1024 + 19, 93);
+        fixture.write("source.bin", &bytes);
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
+        assert!(app.failure(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password","failAfter":1})).contains("fixture interruption"));
+        app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"original.bin","filePassphrase":"fixture file password"}));
+        assert_eq!(fixture.read("original.bin"), bytes);
+        let moved = app.ok(json!({"command":"multipart_move","message":upload["message"],"targetFolder":9001,"filePassphrase":"fixture file password"}));
+        assert!(app.ok(json!({"command":"multipart_remote"}))["documents"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        app.ok(json!({"command":"multipart_download","message":moved["message"],"folder":9001,"destination":"moved.bin","filePassphrase":"fixture file password"}));
+        assert_eq!(fixture.read("moved.bin"), bytes);
+        assert!(app.failure(json!({"command":"multipart_delete","message":moved["message"],"folder":9001,"filePassphrase":"fixture file password","failAfter":1})).contains("fixture interruption"));
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+        app.ok(json!({"command":"multipart_delete","message":moved["message"],"folder":9001,"filePassphrase":"fixture file password"}));
+        assert!(
+            app.ok(json!({"command":"multipart_remote","folder":9001}))["documents"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        // A completed upload checkpoint must not strand this source after its
+        // previous logical set has been moved away or deleted.
+        let replacement = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
+        assert_eq!(replacement["resumed"], 0, "{mode}");
+        app.ok(json!({"command":"multipart_download","message":replacement["message"],"destination":"replacement.bin","filePassphrase":"fixture file password"}));
+        assert_eq!(fixture.read("replacement.bin"), bytes);
+        app.stop();
+    }
+}
+
+#[test]
+fn multipart_remote_only_recovery_needs_no_upload_journal_or_metadata_cache() {
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let original = Fixture::new();
+        let restored = Fixture::new();
+        let bytes = synthetic_bytes(1024 * 1024 + 17, 94);
+        original.write("private-name.mp4", &bytes);
+        let mut app = Backend::start(&original.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+        app.ok(json!({"command":"vault_export","passphrase":"fixture recovery password"}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"private-name.mp4","mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}));
+        let remote = app.ok(json!({"command":"multipart_remote"}));
+        if mode != "standard" {
+            for document in remote["documents"].as_array().unwrap() {
+                let id = document["id"].as_i64().unwrap();
+                let ciphertext =
+                    std::fs::read(original.path(&format!("multipart-remote-101-4242/{id}.bin")))
+                        .unwrap();
+                assert!(!ciphertext
+                    .windows(b"private-name.mp4".len())
+                    .any(|w| w == b"private-name.mp4"));
+                assert!(!document.to_string().contains("private-name.mp4"));
+            }
+        }
+        app.stop();
+        std::fs::create_dir_all(restored.path("multipart-remote-101-4242")).unwrap();
+        for entry in std::fs::read_dir(original.path("multipart-remote-101-4242")).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(
+                entry.path(),
+                restored
+                    .path("multipart-remote-101-4242")
+                    .join(entry.file_name()),
+            )
+            .unwrap();
+        }
+        restored.write("recovery.bundle", original.read("recovery.bundle"));
+        let mut app = Backend::start(&restored.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_recover","passphrase":"fixture recovery password","vaultPassphrase":"fixture new vault password"}));
+        app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"restored.bin","filePassphrase":"fixture file password"}));
+        assert_eq!(restored.read("restored.bin"), bytes, "{mode}");
+        app.stop();
+    }
+}
+
+#[test]
+fn multipart_rejects_invalid_manifest_orders_duplicates_bounds_and_scopes() {
+    for fault in [
+        "order",
+        "duplicate",
+        "length",
+        "count",
+        "folder",
+        "owner",
+        "version",
+        "mode",
+    ] {
+        let fixture = Fixture::new();
+        fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 95));
+        fixture.write("destination.bin", b"untouched");
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        let upload = app.ok(json!({"command":"multipart_upload","source":"source.bin","mode":"standard","objectLimit":1048576}));
+        let id = upload["message"].as_i64().unwrap();
+        let base = fixture.path("multipart-remote-101-4242");
+        let file = base.join(format!("{id}.bin"));
+        let bytes = std::fs::read(&file).unwrap();
+        let mut manifest: Value = serde_json::from_slice(&bytes[6..]).unwrap();
+        match fault {
+            "order" => manifest["parts"].as_array_mut().unwrap().swap(0, 1),
+            "duplicate" => manifest["parts"][1] = manifest["parts"][0].clone(),
+            "length" => manifest["length"] = json!(u64::MAX),
+            "count" => manifest["parts"] = json!(vec![manifest["parts"][0].clone(); 4097]),
+            "folder" => manifest["folder"] = json!(9001),
+            "owner" => manifest["owner"] = json!(202),
+            "version" => manifest["version"] = json!(999),
+            "mode" => manifest["mode"] = json!("vault"),
+            _ => unreachable!(),
+        }
+        let mut bytes = b"TDMP1\n".to_vec();
+        bytes.extend(serde_json::to_vec(&manifest).unwrap());
+        std::fs::write(file, &bytes).unwrap();
+        let metadata = base.join(format!("{id}.json"));
+        let mut remote: Value = serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+        remote["size"] = json!(bytes.len());
+        std::fs::write(metadata, serde_json::to_vec(&remote).unwrap()).unwrap();
+        assert!(
+            !app.failure(
+                json!({"command":"multipart_download","message":id,"destination":"destination.bin"})
+            )
+            .is_empty(),
+            "{fault}"
+        );
+        assert_eq!(fixture.read("destination.bin"), b"untouched", "{fault}");
+        app.stop();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

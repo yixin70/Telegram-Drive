@@ -1358,6 +1358,7 @@ pub async fn cmd_prepare_transcoded_stream(
             .flatten()
             .next()
             .ok_or("Message not found")?;
+        crate::multipart::reject_message(&message)?;
         let media = message.media().ok_or("No media")?;
         if message.text() == "TDENC2"
             || matches!(&media, Media::Document(document) if document.name().to_ascii_lowercase().ends_with(".tdenc"))
@@ -1432,6 +1433,7 @@ async fn get_duration_from_media(
         .next()
         .ok_or_else(|| "Message not found".to_string())?;
 
+    crate::multipart::reject_message(&msg)?;
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
 
     let size = match &media {

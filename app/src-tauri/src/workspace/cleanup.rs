@@ -42,6 +42,7 @@ pub struct ScheduleResult {
 }
 
 fn fingerprint(message: &Message) -> Result<String, String> {
+    crate::multipart::reject_message(message)?;
     let media = message.media().ok_or("FILE_NOT_FOUND")?;
     let identity = match &media {
         Media::Document(document) => format!("document:{}", document.id()),
@@ -90,6 +91,9 @@ async fn message(
         .flatten()
         .next();
     account.validate()?;
+    if let Some(message) = &value {
+        crate::multipart::reject_message(message)?;
+    }
     Ok((client, peer, value))
 }
 

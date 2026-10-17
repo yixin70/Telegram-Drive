@@ -136,6 +136,7 @@ async fn prepare_archive_operation(
         .next()
         .ok_or("File not found")?;
 
+    crate::multipart::reject_message(&msg)?;
     let media = msg.media().ok_or("Message has no media")?;
 
     let filename = match &media {

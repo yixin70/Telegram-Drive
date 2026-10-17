@@ -391,6 +391,7 @@ pub(crate) async fn delete_remote(
             app.state::<DbConnection>(),
             app.clone(),
             Some(account.owner.to_string()),
+            None,
         )
     })
     .await
@@ -423,6 +424,7 @@ async fn verify_remote_precondition(
         .flatten()
         .next()
         .ok_or("The remote file disappeared after planning; deletion was cancelled")?;
+    crate::multipart::reject_message(&message)?;
     let actual = super::message_fingerprint(&message)?;
     if actual != expected_hash {
         return Err("The remote file changed after planning; deletion was cancelled".into());

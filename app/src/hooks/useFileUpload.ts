@@ -452,7 +452,7 @@ export function useFileUpload(
                     toast.warning(t('settings.encryption_mode_passphrase'));
                 } else if (errMsg.includes('FILE_TOO_BIG') || errMsg.includes('too large') || errMsg.includes('2 GB')) {
                     setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
-                    toast.error(`Upload failed: Telegram has a 2 GB file size limit. Try splitting large folders.`);
+                    toast.error(`Telegram rejected an upload object. Local files split automatically; this import path may have its own size limit.`);
                 } else if (isAndroidPlatform && isTransientNetworkError(errMsg)) {
                     keepTemporaryFileForResume = true;
                     setUploadQueue(q => q.map(i => i.id === item.id ? {

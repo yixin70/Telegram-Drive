@@ -69,6 +69,9 @@ pub fn parse_time(value: &str) -> Option<i64> {
 }
 
 pub fn file_from_message(message: &Message, folder_id: Option<i64>) -> Option<ApiFile> {
+    if crate::multipart::reject_message(message).is_err() {
+        return None;
+    }
     let media = message.media()?;
     let size = media_size(&media);
     let caption = message.text();

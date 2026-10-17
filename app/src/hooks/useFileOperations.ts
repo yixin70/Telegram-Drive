@@ -23,9 +23,25 @@ export function useFileOperations(
     ownerId: string | null = null,
 ) {
     const queryClient = useQueryClient();
-    const { confirm } = useConfirm();
+    const { confirm, promptSecret } = useConfirm();
     const { t } = useTranslation();
     const capture = useActionScope(ownerId);
+
+    // Multipart mutations must authenticate their manifest before touching any
+    // piece. Secrets stay in memory and reach the mutation only as one-use tokens.
+    const mutate = useCallback(async (command: string, args: Record<string, unknown>, isCurrent: () => boolean) => {
+        try {
+            return await invoke(command, args);
+        } catch (error) {
+            if (!String(error).includes('[MULTIPART_PASSPHRASE_REQUIRED]')) throw error;
+            if (!isCurrent()) throw error;
+            const passphrase = await promptSecret({ title: t('settings.encryption_mode_passphrase') });
+            if (passphrase === null || !isCurrent()) throw error;
+            const promptToken = await invoke<number>('cmd_stage_file_passphrase', { passphrase });
+            if (!isCurrent()) throw error;
+            return invoke(command, { ...args, promptToken });
+        }
+    }, [promptSecret, t]);
 
     // Callbacks read current selection data without being recreated for every click.
     const selectedIdsRef = useRef(selectedIds);
@@ -46,7 +62,7 @@ export function useFileOperations(
         const sourceFolderId = sourceFolder(file, activeFolderId);
         if (!await confirm({ title: t('operations.delete_file'), message: t('operations.delete_file_question'), confirmText: i18n.t("files.delete"), variant: 'danger' }) || !isCurrent()) return;
         try {
-            await invoke('cmd_delete_file', { messageId: id, folderId: sourceFolderId, ownerId });
+            await mutate('cmd_delete_file', { messageId: id, folderId: sourceFolderId, ownerId }, isCurrent);
             if (!isCurrent()) return;
             updateFileQueryData(queryClient, sourceFolderId, new Set([id]), () => null, ownerId);
             void invalidateOwnedFileQueries(queryClient, ownerId);
@@ -54,7 +70,7 @@ export function useFileOperations(
         } catch (error) {
             if (isCurrent()) toast.error(userFacingError(error, t));
         }
-    }, [activeFolderId, capture, confirm, ownerId, queryClient, t]);
+    }, [activeFolderId, capture, confirm, mutate, ownerId, queryClient, t]);
 
     const handleBulkDelete = useCallback(async () => {
         const isCurrent = capture();
@@ -72,7 +88,7 @@ export function useFileOperations(
         for (const target of targets) {
             if (!isCurrent()) return;
             try {
-                await invoke('cmd_delete_file', { messageId: target.id, folderId: target.folderId, ownerId });
+                await mutate('cmd_delete_file', { messageId: target.id, folderId: target.folderId, ownerId }, isCurrent);
                 if (!isCurrent()) return;
                 success++;
                 deletedByFolder.set(target.folderId, [...(deletedByFolder.get(target.folderId) ?? []), target.id]);
@@ -89,7 +105,7 @@ export function useFileOperations(
         void invalidateOwnedFileQueries(queryClient, ownerId);
         if (success > 0) toast.success(t('operations.deleted_count',{count:success}));
         if (fail > 0) toast.error(t('operations.delete_failed_count',{count:fail}));
-    }, [activeFolderId, capture, confirm, ownerId, queryClient, setSelectedIds, t]);
+    }, [activeFolderId, capture, confirm, mutate, ownerId, queryClient, setSelectedIds, t]);
 
     const handleRenameFile = useCallback(async (file: TelegramFile, newName: string) => {
         const isCurrent = capture();
@@ -122,7 +138,7 @@ export function useFileOperations(
             if (!accepted || !isCurrent()) return false;
         }
         try {
-            await invoke('cmd_move_files', { ownerId, messageIds: ids, sourceFolderId, targetFolderId });
+            await mutate('cmd_move_files', { ownerId, messageIds: ids, sourceFolderId, targetFolderId }, isCurrent);
             if (!isCurrent()) return false;
             updateFileQueryData(queryClient, sourceFolderId, new Set(ids), () => null, ownerId);
             void invalidateOwnedFileQueries(queryClient, ownerId);
@@ -133,7 +149,7 @@ export function useFileOperations(
             if (isCurrent()) toast.error(userFacingError(error, t));
             return false;
         }
-    }, [activeFolderId, capture, confirm, ownerId, queryClient, t]);
+    }, [activeFolderId, capture, confirm, mutate, ownerId, queryClient, t]);
 
     const handleBulkDownload = useCallback(async () => {
         const ids = selectedIdsRef.current;

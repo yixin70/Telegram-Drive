@@ -458,6 +458,9 @@ impl TelegramDavFs {
             let Some(message) = messages.next() else {
                 break;
             };
+            if crate::multipart::reject_message(message).is_err() {
+                continue;
+            }
             let Some(media) = message.media() else {
                 continue;
             };

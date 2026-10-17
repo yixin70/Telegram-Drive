@@ -15,6 +15,7 @@ pub(crate) mod desktop_video_upload;
 pub mod installation;
 pub mod linux_startup;
 pub mod models;
+mod multipart;
 #[cfg(feature = "native-e2e")]
 #[doc(hidden)]
 pub mod native_e2e;
@@ -1386,6 +1387,7 @@ pub fn run() {
             upload_service::cmd_update_foreground_service,
             commands::cmd_connect,
             commands::cmd_delete_file,
+            commands::cmd_multipart_recovery,
             commands::cmd_download_file,
             commands::cmd_move_files,
             commands::cmd_create_folder,

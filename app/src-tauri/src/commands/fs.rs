@@ -386,6 +386,7 @@ pub(crate) async fn resolve_remote_envelope(
     media: &Media,
     caption: &str,
 ) -> Result<Option<EncryptedFileRecord>, String> {
+    crate::multipart::reject_media(caption, media)?;
     resolve_remote_envelope_with_probe(
         account,
         folder_id,
@@ -458,10 +459,10 @@ impl Default for ListingHeaderBudget {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 impl ListingHeaderBudget {
-    async fn probe(
+    async fn probe<T>(
         &mut self,
-        fetch: impl std::future::Future<Output = Result<Vec<u8>, String>>,
-    ) -> Result<Vec<u8>, String> {
+        fetch: impl std::future::Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
         if self.remaining.is_zero() {
             return Err(LISTING_HEADER_DEFERRED.into());
         }
@@ -472,7 +473,7 @@ impl ListingHeaderBudget {
     }
 }
 
-fn inferred_mime_type(path: &str) -> &'static str {
+pub(crate) fn inferred_mime_type(path: &str) -> &'static str {
     match std::path::Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -1677,17 +1678,17 @@ impl tokio::io::AsyncRead for ProgressReader {
     }
 }
 
-struct PartialFileGuard {
+pub(crate) struct PartialFileGuard {
     path: std::path::PathBuf,
     armed: bool,
 }
 
 impl PartialFileGuard {
-    fn new(path: std::path::PathBuf) -> Self {
+    pub(crate) fn new(path: std::path::PathBuf) -> Self {
         Self { path, armed: true }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -1700,7 +1701,7 @@ impl Drop for PartialFileGuard {
     }
 }
 
-fn create_private_partial_file(path: &std::path::Path) -> Result<std::fs::File, String> {
+pub(crate) fn create_private_partial_file(path: &std::path::Path) -> Result<std::fs::File, String> {
     let mut options = std::fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -1711,7 +1712,9 @@ fn create_private_partial_file(path: &std::path::Path) -> Result<std::fs::File, 
     options.open(path).map_err(|error| error.to_string())
 }
 
-fn download_partial_path(destination: &std::path::Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn download_partial_path(
+    destination: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     let parent = destination
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -2489,6 +2492,102 @@ async fn cmd_upload_file_inner(
     let video_upload_mode = VideoUploadMode::parse(video_upload_mode.as_deref())?;
     let is_encrypted = protection_mode != UploadProtectionMode::Standard;
 
+    // Multipart is a separate transport. Ordinary TDENC2 documents continue
+    // through the unchanged writer and retain their historical byte format.
+    let metadata_length = if is_encrypted {
+        protected_metadata_bytes(
+            &path,
+            protect_metadata.unwrap_or(true),
+            sync_path.as_deref(),
+        )?
+        .len()
+    } else {
+        0
+    };
+    if crate::multipart::needs_split(
+        plaintext_size,
+        protection_mode.registry_name(),
+        metadata_length,
+    )? {
+        if sync_path.is_some() {
+            return Err("[MULTIPART_UNSUPPORTED] Folder Sync multipart uploads are not supported; upload this local file directly".into());
+        }
+        if is_encrypted && !crypto_state.get_features().upload_enabled {
+            return Err("[ENCRYPTION_BLOCKED] Encrypted uploads are disabled".into());
+        }
+        // The shared uploader reserves and commits each actual object, including
+        // its envelope and manifest, rather than reserving plaintext twice.
+        drop(admitted_upload);
+        let vault_credential = if protection_mode.needs_vault() {
+            Some(
+                crypto_state
+                    .current_credential()
+                    .map_err(|_| "[VAULT_LOCKED] Unlock the vault before uploading".to_string())?,
+            )
+        } else {
+            None
+        };
+        let prompt_secret = if protection_mode.needs_passphrase() {
+            Some(
+                crypto_state
+                    .consume_prompt_secret(
+                        prompt_token
+                            .ok_or("[KEY_REQUIRED] Enter the file passphrase before uploading")?,
+                    )
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        let client = state
+            .client
+            .lock()
+            .await
+            .clone()
+            .ok_or("Client not connected")?;
+        transfer_account.validate_client(&client).await?;
+        let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
+        let tid = transfer_id.unwrap_or_default();
+        let (_cancellation, _cancel_rx) = UploadCancellation::register(&tid);
+        let transport = crate::multipart::telegram::Telegram {
+            account: transfer_account.clone(),
+            client,
+            peer,
+            folder: folder_id,
+            bandwidth: bw_state.inner().clone(),
+            network: net_config.inner().clone(),
+            crypto: Some(crypto_state.inner()),
+            session: vault_credential.as_ref().map(|(id, _)| *id),
+            cancelled: Some(state.cancelled_transfers.clone()),
+            app: Some(app_handle.clone()),
+            transfer: tid,
+            upload: true,
+            source: Some(SourceFingerprint::of(std::path::Path::new(&path)).await?),
+            total: Default::default(),
+        };
+        let credentials = crate::multipart::Credentials {
+            mode: protection_mode.registry_name(),
+            vault: vault_credential.as_ref().map(|(_, key)| key),
+            passphrase: prompt_secret.as_ref(),
+        };
+        let uploaded = crate::multipart::upload(
+            &transport,
+            std::path::Path::new(&path),
+            folder_id,
+            &credentials,
+            policy::TELEGRAM_MAX_FILE_SIZE,
+        )
+        .await;
+        state
+            .cancelled_transfers
+            .write()
+            .await
+            .remove(&transport.transfer);
+        let uploaded = uploaded?;
+        crate::file_inventory::changed(&transfer_account, folder_id, &[])?;
+        return Ok(uploaded.message.to_string());
+    }
+
     // --- Encrypted upload path ---
     if is_encrypted {
         if !crypto_state.get_features().upload_enabled {
@@ -3262,6 +3361,7 @@ pub async fn cmd_rename_file(
         .first()
         .and_then(Option::as_ref)
         .ok_or("The file was not found; refresh the folder")?;
+    crate::multipart::reject_message(message)?;
     if let Some(media) = message.media() {
         if resolve_remote_envelope(
             &account,
@@ -3330,6 +3430,54 @@ pub async fn cmd_rename_file(
 }
 
 #[tauri::command]
+pub async fn cmd_multipart_recovery(
+    folder_id: Option<i64>,
+    group: Option<String>,
+    prompt_token: Option<u64>,
+    owner_id: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+) -> Result<serde_json::Value, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    let credential = crypto.current_credential().ok();
+    let secret = prompt_token
+        .map(|token| crypto.consume_prompt_secret(token))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
+    let transport = crate::multipart::telegram::Telegram::operation(
+        &app,
+        account.clone(),
+        client,
+        peer,
+        folder_id,
+        &crypto,
+        credential.as_ref().map(|(session, _)| *session),
+    );
+    let credentials = crate::multipart::Credentials {
+        mode: "auto",
+        vault: credential.as_ref().map(|(_, key)| key),
+        passphrase: secret.as_ref(),
+    };
+    if let Some(group) = group {
+        crate::multipart::recovery::cleanup(&transport, folder_id, &group, &credentials).await?;
+        crate::file_inventory::changed(&account, folder_id, &[])?;
+        Ok(serde_json::Value::Null)
+    } else {
+        serde_json::to_value(crate::multipart::recovery::list(&transport, &credentials).await?)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
 pub async fn cmd_delete_file(
     message_id: i32,
     folder_id: Option<i64>,
@@ -3337,6 +3485,7 @@ pub async fn cmd_delete_file(
     _db_pool: State<'_, DbConnection>,
     app: tauri::AppHandle,
     owner_id: Option<String>,
+    prompt_token: Option<u64>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let client = state
@@ -3352,8 +3501,62 @@ pub async fn cmd_delete_file(
         .get_messages_by_id(&peer, &[message_id])
         .await
         .map_err(|error| error.to_string())?;
-    if messages.iter().flatten().next().is_none() {
+    let pending_delete =
+        crate::multipart::operations::pending_delete(&account, folder_id, message_id)?;
+    if messages.iter().flatten().next().is_none() && !pending_delete {
         return Err("The file was not found; refresh the folder".into());
+    }
+    if pending_delete
+        || messages
+            .iter()
+            .flatten()
+            .next()
+            .is_some_and(|message| crate::multipart::is_manifest(message.text()))
+    {
+        let crypto = app.state::<crate::crypto::state::CryptoState>();
+        let credential = crypto.current_credential().ok();
+        let secret = prompt_token
+            .map(|token| crypto.consume_prompt_secret(token))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let transport = crate::multipart::telegram::Telegram::operation(
+            &app,
+            account.clone(),
+            client,
+            peer,
+            folder_id,
+            &crypto,
+            credential.as_ref().map(|(session, _)| *session),
+        );
+        let credentials = crate::multipart::Credentials {
+            mode: "auto",
+            vault: credential.as_ref().map(|(_, key)| key),
+            passphrase: secret.as_ref(),
+        };
+        if secret.is_none()
+            && messages.iter().flatten().next().is_some()
+            && crate::multipart::protection(&transport, message_id)
+                .await?
+                .contains("passphrase")
+        {
+            return Err("[MULTIPART_PASSPHRASE_REQUIRED] Authenticate this multipart file before deleting it".into());
+        }
+        if let Err(error) =
+            crate::multipart::operations::delete(&transport, message_id, folder_id, &credentials)
+                .await
+        {
+            if pending_delete && secret.is_none() && messages.iter().flatten().next().is_none() {
+                return Err(format!("[MULTIPART_PASSPHRASE_REQUIRED] Unlock the pending deletion before retrying: {error}"));
+            }
+            return Err(error);
+        }
+        crate::file_inventory::changed(&account, folder_id, &[message_id])?;
+        return Ok(true);
+    }
+    if let Some(message) = messages.iter().flatten().next() {
+        if let Some(media) = message.media() {
+            crate::multipart::reject_media(message.text(), &media)?;
+        }
     }
     account.validate()?;
     client
@@ -3542,6 +3745,68 @@ async fn cmd_download_file_owned(
         .flatten()
         .next()
         .ok_or_else(|| "Message not found".to_string())?;
+    if crate::multipart::is_part(msg.text()) {
+        return Err(crate::multipart::UNSUPPORTED.into());
+    }
+    if crate::multipart::is_manifest(msg.text()) {
+        if msg.media().is_some_and(
+            |media| matches!(media, Media::Document(d) if d.name().ends_with(".tdenc")),
+        ) && !crypto_state.get_features().read_enabled
+        {
+            return Err("[ENCRYPTION_EXPERIMENTAL_UNSUPPORTED] Encrypted multipart reading is disabled in this build".into());
+        }
+        #[cfg(target_os = "android")]
+        return Err("[MULTIPART_UNSUPPORTED] Multipart download publication is currently supported on desktop".into());
+        #[cfg(not(target_os = "android"))]
+        {
+            let credential = crypto_state.current_credential().ok();
+            let secret = prompt_token
+                .map(|token| crypto_state.consume_prompt_secret(token))
+                .transpose()
+                .map_err(|e| e.to_string())?;
+            let transport = crate::multipart::telegram::Telegram {
+                account: transfer_account,
+                client,
+                peer,
+                folder: folder_id,
+                bandwidth: bw_state.inner().clone(),
+                network: net_config.inner().clone(),
+                crypto: Some(crypto_state.inner()),
+                session: credential.as_ref().map(|(id, _)| *id),
+                cancelled: Some(state.cancelled_transfers.clone()),
+                app: Some(app_handle),
+                transfer: tid,
+                upload: false,
+                source: None,
+                total: Default::default(),
+            };
+            let credentials = crate::multipart::Credentials {
+                mode: "auto",
+                vault: credential.as_ref().map(|(_, key)| key),
+                passphrase: secret.as_ref(),
+            };
+            if crate::multipart::protection(&transport, message_id).await? != "standard"
+                && !crypto_state.get_features().read_enabled
+            {
+                return Err("[ENCRYPTION_EXPERIMENTAL_UNSUPPORTED] Encrypted multipart reading is disabled in this build".into());
+            }
+            let downloaded = crate::multipart::download(
+                &transport,
+                message_id,
+                folder_id,
+                std::path::Path::new(&actual_save_path),
+                &credentials,
+                collision_policy,
+            )
+            .await;
+            state
+                .cancelled_transfers
+                .write()
+                .await
+                .remove(&transport.transfer);
+            return downloaded?.response();
+        }
+    }
     let media = msg
         .media()
         .ok_or_else(|| "No media in message".to_string())?;
@@ -4271,6 +4536,7 @@ pub(crate) fn verify_forwarded_messages<T>(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the IPC fields and explicit account/single-use credential scope.
 pub async fn cmd_move_files(
     message_ids: Vec<i32>,
     source_folder_id: Option<i64>,
@@ -4279,6 +4545,7 @@ pub async fn cmd_move_files(
     _db_pool: State<'_, DbConnection>,
     app: tauri::AppHandle,
     owner_id: Option<String>,
+    prompt_token: Option<u64>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     if source_folder_id == target_folder_id {
@@ -4294,6 +4561,75 @@ pub async fn cmd_move_files(
     let source_peer = resolve_peer(&client, source_folder_id, &state.peer_cache).await?;
     let target_peer = resolve_peer(&client, target_folder_id, &state.peer_cache).await?;
     account.validate()?;
+    let selected = client
+        .get_messages_by_id(&source_peer, &message_ids)
+        .await
+        .map_err(|error| error.to_string())?;
+    let multipart_selected: Vec<_> = selected
+        .iter()
+        .flatten()
+        .filter(|message| crate::multipart::is_manifest(message.text()))
+        .collect();
+    if !multipart_selected.is_empty() {
+        if message_ids.len() != 1 || multipart_selected.len() != 1 {
+            return Err("[MULTIPART_UNSUPPORTED] Move multipart files one at a time so each complete set is verified".into());
+        }
+        let crypto = app.state::<crate::crypto::state::CryptoState>();
+        let credential = crypto.current_credential().ok();
+        let secret = prompt_token
+            .map(|token| crypto.consume_prompt_secret(token))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let session = credential.as_ref().map(|(session, _)| *session);
+        let source = crate::multipart::telegram::Telegram::operation(
+            &app,
+            account.clone(),
+            client.clone(),
+            source_peer,
+            source_folder_id,
+            &crypto,
+            session,
+        );
+        let target = crate::multipart::telegram::Telegram::operation(
+            &app,
+            account.clone(),
+            client,
+            target_peer,
+            target_folder_id,
+            &crypto,
+            session,
+        );
+        let credentials = crate::multipart::Credentials {
+            mode: "auto",
+            vault: credential.as_ref().map(|(_, key)| key),
+            passphrase: secret.as_ref(),
+        };
+        if secret.is_none()
+            && crate::multipart::protection(&source, message_ids[0])
+                .await?
+                .contains("passphrase")
+        {
+            return Err(
+                "[MULTIPART_PASSPHRASE_REQUIRED] Authenticate this multipart file before moving it"
+                    .into(),
+            );
+        }
+        crate::multipart::operations::move_file(
+            &source,
+            &target,
+            message_ids[0],
+            source_folder_id,
+            target_folder_id,
+            &credentials,
+        )
+        .await?;
+        crate::file_inventory::changed(&account, source_folder_id, &message_ids)?;
+        crate::file_inventory::changed(&account, target_folder_id, &[])?;
+        return Ok(true);
+    }
+    for message in selected.iter().flatten() {
+        crate::multipart::reject_message(message)?;
+    }
     let forwarded = client
         .forward_messages(&target_peer, &message_ids, &source_peer)
         .await
@@ -4429,6 +4765,7 @@ async fn publish_folder_chunk(
 }
 
 pub(crate) struct InventoryMetadataReader<'a> {
+    app: &'a tauri::AppHandle,
     pub account: &'a crate::workspace::AccountGuard,
     pub client: &'a grammers_client::Client,
     pub folder: Option<i64>,
@@ -4438,12 +4775,14 @@ pub(crate) struct InventoryMetadataReader<'a> {
 }
 impl<'a> InventoryMetadataReader<'a> {
     pub(crate) fn new(
+        app: &'a tauri::AppHandle,
         account: &'a crate::workspace::AccountGuard,
         client: &'a grammers_client::Client,
         folder: Option<i64>,
         vault_key: Option<&'a SecretKey>,
     ) -> Self {
         Self {
+            app,
             account,
             client,
             folder,
@@ -4465,6 +4804,99 @@ impl<'a> InventoryMetadataReader<'a> {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let header_budget = &mut self.header_budget;
         workspace_account.validate()?;
+        if msg
+            .media()
+            .is_some_and(|media| crate::multipart::part_document(msg.text(), &media))
+        {
+            return Ok(None);
+        }
+        if crate::multipart::is_manifest(msg.text()) {
+            let protected = msg.media().is_some_and(
+                |media| matches!(media, Media::Document(d) if d.name().ends_with(".tdenc")),
+            );
+            let mut name = if protected {
+                "Encrypted file"
+            } else {
+                "Multipart file (metadata unavailable)"
+            }
+            .to_string();
+            let mut size = 0;
+            let mut mime = Some("application/octet-stream".to_string());
+            let mut encryption_state = if protected {
+                "encrypted_locked"
+            } else {
+                "plain"
+            }
+            .to_string();
+            if !protected || vault_key.is_some() {
+                let state = self.app.state::<TelegramState>();
+                let peer = resolve_peer(client, folder_id, &state.peer_cache).await?;
+                let transport = crate::multipart::telegram::Telegram {
+                    account: workspace_account.clone(),
+                    client: client.clone(),
+                    peer,
+                    folder: folder_id,
+                    bandwidth: self.app.state::<Arc<BandwidthManager>>().inner().clone(),
+                    network: self.app.state::<Arc<NetworkConfig>>().inner().clone(),
+                    crypto: None,
+                    session: None,
+                    cancelled: None,
+                    app: None,
+                    transfer: String::new(),
+                    upload: false,
+                    source: None,
+                    total: Default::default(),
+                };
+                let credentials = crate::multipart::Credentials {
+                    mode: "auto",
+                    vault: vault_key,
+                    passphrase: None,
+                };
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                let metadata = header_budget
+                    .probe(crate::multipart::read_manifest(
+                        &transport,
+                        msg.id(),
+                        folder_id,
+                        &credentials,
+                    ))
+                    .await;
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                let metadata = Err::<crate::multipart::Manifest, _>(
+                    "Multipart metadata is desktop-only".to_string(),
+                );
+                match metadata {
+                    Ok(manifest) => {
+                        name = manifest.name;
+                        size = manifest.length;
+                        mime = Some(manifest.mime);
+                        if protected {
+                            encryption_state = "encrypted_unlocked".into();
+                        }
+                    }
+                    _ => {
+                        workspace_account.validate()?;
+                    }
+                }
+            }
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(str::to_string);
+            return Ok(Some(FileMetadata {
+                id: i64::from(msg.id()),
+                folder_id,
+                name,
+                size,
+                mime_type: mime,
+                file_ext: ext,
+                created_at: msg.date().to_string(),
+                icon_type: "file".into(),
+                encryption_state,
+                is_favorite,
+                is_pinned,
+            }));
+        }
         if let Some(doc) = msg.media() {
             let declared_size = media_size(&doc);
             let (mut name, mut size, mut mime, mut ext, remote_document_name) = match &doc {
@@ -4715,6 +5147,7 @@ pub async fn cmd_get_files(
         let mut all_files = Vec::new();
         let mut last_chunk_emitted = std::time::Instant::now();
         let mut metadata_reader = InventoryMetadataReader::new(
+            &app_handle,
             &workspace_account,
             &client,
             folder_id,

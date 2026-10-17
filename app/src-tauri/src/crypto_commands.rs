@@ -556,6 +556,38 @@ pub async fn cmd_get_file_encryption_info(
     let media = message
         .media()
         .ok_or_else(|| "No media in message".to_string())?;
+    if crate::multipart::is_manifest(message.text()) {
+        let credential = crypto_state.current_credential().ok();
+        let transport = crate::multipart::telegram::Telegram::operation(
+            &app,
+            account,
+            client,
+            peer,
+            folder_id,
+            &crypto_state,
+            credential.as_ref().map(|(id, _)| *id),
+        );
+        let mode = crate::multipart::protection(&transport, message_id).await?;
+        let protected = mode != "standard";
+        if protected && !crypto_state.get_features().read_enabled {
+            return Err("[ENCRYPTION_BLOCKED] Protected downloads are disabled".into());
+        }
+        return Ok(FileEncryptionInfo {
+            state: if !protected {
+                "plain"
+            } else if credential.is_some() && mode != "passphrase" {
+                "encrypted_unlocked"
+            } else {
+                "encrypted_locked"
+            }
+            .into(),
+            envelope_version: protected.then_some(crate::crypto::policy::FORMAT_VERSION),
+            profile_id: None,
+            protection_mode: protected.then_some(mode),
+            metadata_protected: protected.then_some(true),
+            ciphertext_size: Some(crate::commands::utils::media_size(&media)),
+        });
+    }
     let record = crate::commands::fs::resolve_remote_envelope(
         &account,
         &client,

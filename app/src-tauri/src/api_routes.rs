@@ -1038,6 +1038,7 @@ async fn api_bulk_files(
                         404,
                     );
                 };
+                if let Err(error) = crate::multipart::reject_message(&message) { return json_error("MULTIPART_UNSUPPORTED", &error, 409); }
                 let Some(media) = message.media() else {
                     return json_error(
                         "ARCHIVE_MEDIA_MISSING",
@@ -1259,6 +1260,12 @@ async fn api_delete_file(
 
     if let Some(error) = api_scope_error(&account) {
         return error;
+    }
+    match api_registered_encrypted(&account, &client, tg_state.get_ref(), folder_id, message_id)
+        .await
+    {
+        Ok(_) => {}
+        Err(error) => return json_error("FILE_NOT_VERIFIED", &error, 409),
     }
     match client.delete_messages(&peer, &[message_id]).await {
         Ok(_) => {

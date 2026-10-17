@@ -55,6 +55,233 @@ struct FixtureSink {
     saved: std::sync::Mutex<Vec<i32>>,
 }
 
+struct MultipartFixture<'a> {
+    folder: Option<i64>,
+    account: AccountGuard,
+    bandwidth: Arc<crate::bandwidth::BandwidthManager>,
+    crypto: &'a CryptoState,
+    session: Option<u64>,
+    fail_after: Option<usize>,
+    saved: std::sync::atomic::AtomicUsize,
+    stop_on_progress: Option<String>,
+    stopped: std::sync::atomic::AtomicBool,
+    progress: std::sync::Mutex<Vec<(u64, u64)>>,
+}
+
+impl MultipartFixture<'_> {
+    fn directory(&self) -> Result<PathBuf, String> {
+        self.account.validate()?;
+        let path = self.account.root.join(format!(
+            "multipart-remote-{}-{}",
+            self.account.owner,
+            self.folder.unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&path).map_err(error)?;
+        Ok(path)
+    }
+    fn documents(&self) -> Result<Vec<crate::multipart::Remote>, String> {
+        let mut documents = Vec::new();
+        for entry in std::fs::read_dir(self.directory()?).map_err(error)? {
+            let path = entry.map_err(error)?.path();
+            if path.extension().is_some_and(|s| s == "json") {
+                documents.push(
+                    serde_json::from_slice(&std::fs::read(path).map_err(error)?).map_err(error)?,
+                );
+            }
+        }
+        documents.sort_by_key(|r: &crate::multipart::Remote| r.id);
+        Ok(documents)
+    }
+}
+
+impl crate::multipart::Transport for MultipartFixture<'_> {
+    fn account(&self) -> &AccountGuard {
+        &self.account
+    }
+    fn bandwidth(&self) -> Arc<crate::bandwidth::BandwidthManager> {
+        self.bandwidth.clone()
+    }
+    fn check(&self) -> Result<(), String> {
+        self.account.validate()?;
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Transfer cancelled by fixture".into());
+        }
+        if let Some(session) = self.session {
+            self.crypto
+                .with_current_session(session, || ())
+                .map_err(error)?;
+        }
+        Ok(())
+    }
+    fn progress(&self, bytes: u64, total: u64) {
+        self.progress.lock().unwrap().push((bytes, total));
+        if bytes > 0 && bytes < total {
+            match self.stop_on_progress.as_deref() {
+                Some("cancel") => self
+                    .stopped
+                    .store(true, std::sync::atomic::Ordering::Relaxed),
+                Some("vault_lock") => self.crypto.lock(),
+                _ => (),
+            }
+        }
+    }
+    async fn put(
+        &self,
+        mut reader: crate::multipart::Reader,
+        size: u64,
+        name: &str,
+        caption: &str,
+        _key: &str,
+        _header: Option<&[u8]>,
+    ) -> Result<crate::multipart::Remote, String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        self.check()?;
+        if self
+            .fail_after
+            .is_some_and(|limit| self.saved.load(std::sync::atomic::Ordering::SeqCst) >= limit)
+        {
+            return Err("fixture interruption".into());
+        }
+        // Consume even an idempotent retry to exercise source/envelope hashing.
+        let existing = self.find(caption).await?;
+        let directory = self.directory()?;
+        let id = self.documents()?.last().map_or(1, |r| r.id + 1);
+        let path = directory.join(format!("{id}.partial"));
+        let mut file = tokio::fs::File::create(&path).await.map_err(error)?;
+        let copied = tokio::io::copy(&mut (&mut reader).take(size + 1), &mut file)
+            .await
+            .map_err(error)?;
+        file.flush().await.map_err(error)?;
+        drop(file);
+        if copied != size {
+            return Err("Fixture object length mismatch".into());
+        }
+        if let Some(existing) = existing {
+            use sha2::Digest;
+            let mut file = tokio::fs::File::open(&path).await.map_err(error)?;
+            let mut hash = sha2::Sha256::new();
+            let mut buffer = vec![0; 256 * 1024];
+            loop {
+                let n = file.read(&mut buffer).await.map_err(error)?;
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buffer[..n]);
+            }
+            drop(file);
+            tokio::fs::remove_file(path).await.map_err(error)?;
+            crate::multipart::verify_remote(self, &existing, &format!("{:x}", hash.finalize()))
+                .await?;
+            return Ok(existing);
+        }
+        tokio::fs::rename(path, directory.join(format!("{id}.bin")))
+            .await
+            .map_err(error)?;
+        let remote = crate::multipart::Remote {
+            id,
+            document: i64::from(id),
+            size,
+            name: name.into(),
+            caption: caption.into(),
+        };
+        std::fs::write(
+            directory.join(format!("{id}.json")),
+            serde_json::to_vec(&remote).map_err(error)?,
+        )
+        .map_err(error)?;
+        self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(remote)
+    }
+    async fn open(
+        &self,
+        id: i32,
+    ) -> Result<(crate::multipart::Remote, crate::multipart::Reader), String> {
+        self.check()?;
+        let directory = self.directory()?;
+        let remote = serde_json::from_slice(
+            &std::fs::read(directory.join(format!("{id}.json"))).map_err(error)?,
+        )
+        .map_err(error)?;
+        let reader = tokio::fs::File::open(directory.join(format!("{id}.bin")))
+            .await
+            .map_err(error)?;
+        Ok((remote, Box::new(reader)))
+    }
+    async fn lookup(&self, id: i32) -> Result<Option<crate::multipart::Remote>, String> {
+        self.check()?;
+        Ok(self.documents()?.into_iter().find(|remote| remote.id == id))
+    }
+    async fn find(&self, caption: &str) -> Result<Option<crate::multipart::Remote>, String> {
+        self.check()?;
+        let found: Vec<_> = self
+            .documents()?
+            .into_iter()
+            .filter(|r| r.caption == caption)
+            .collect();
+        if found.len() > 1 {
+            return Err("Ambiguous fixture publication".into());
+        }
+        Ok(found.into_iter().next())
+    }
+    async fn remove(&self, remote: &crate::multipart::Remote) -> Result<(), String> {
+        self.check()?;
+        if self
+            .fail_after
+            .is_some_and(|limit| self.saved.load(std::sync::atomic::Ordering::SeqCst) >= limit)
+        {
+            return Err("fixture interruption".into());
+        }
+        if let Some(actual) = self.documents()?.into_iter().find(|r| r.id == remote.id) {
+            if actual != *remote {
+                return Err("Fixture deletion identity changed".into());
+            }
+            let directory = self.directory()?;
+            match std::fs::remove_file(directory.join(format!("{}.bin", remote.id))) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            std::fs::remove_file(directory.join(format!("{}.json", remote.id))).map_err(error)?;
+            self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    async fn copy_from(
+        &self,
+        source: &Self,
+        remote: &crate::multipart::Remote,
+        _key: &str,
+    ) -> Result<crate::multipart::Remote, String> {
+        self.check()?;
+        source.check()?;
+        if let Some(found) = self.find(&remote.caption).await? {
+            return Ok(found);
+        }
+        if self
+            .fail_after
+            .is_some_and(|limit| self.saved.load(std::sync::atomic::Ordering::SeqCst) >= limit)
+        {
+            return Err("fixture interruption".into());
+        }
+        let id = self.documents()?.last().map_or(1, |r| r.id + 1);
+        let mut copied = remote.clone();
+        copied.id = id;
+        let directory = self.directory()?;
+        std::fs::copy(
+            source.directory()?.join(format!("{}.bin", remote.id)),
+            directory.join(format!("{id}.bin")),
+        )
+        .map_err(error)?;
+        std::fs::write(
+            directory.join(format!("{id}.json")),
+            serde_json::to_vec(&copied).map_err(error)?,
+        )
+        .map_err(error)?;
+        self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(copied)
+    }
+}
+
 impl crate::resumable_upload::PartSink for FixtureSink {
     async fn save_part(
         &self,
@@ -1285,6 +1512,16 @@ impl Driver {
             | "video_upload_cancel"
             | "video_upload_finish"
             | "upload_resumable"
+            | "multipart_upload"
+            | "multipart_policy"
+            | "multipart_recovery"
+            | "multipart_cleanup"
+            | "multipart_move"
+            | "multipart_delete"
+            | "multipart_inspect"
+            | "multipart_download"
+            | "multipart_remote"
+            | "multipart_fault"
             | "upload_session"
             | "upload_assemble"
             | "publish_download"
@@ -4463,6 +4700,12 @@ impl Driver {
     }
 
     async fn dispatch_transfers(&mut self, request: Value) -> Result<Value, String> {
+        if request["command"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("multipart_"))
+        {
+            return self.multipart(&request).await;
+        }
         match text(&request, "command")? {
             "video_upload_prepare" | "video_upload_start" => {
                 if self.video_upload.is_some() {
@@ -4936,6 +5179,191 @@ impl Driver {
             }
             Err(UploadError::Stale(reason)) => Ok(json!({"startsOver": reason})),
             Err(UploadError::Failed(reason)) => Err(reason),
+        }
+    }
+
+    async fn multipart(&self, request: &Value) -> Result<Value, String> {
+        let mode = request["mode"].as_str().unwrap_or("auto");
+        let credential = self.crypto.current_credential().ok();
+        let key = credential.as_ref().map(|(_, key)| key);
+        let passphrase = request["filePassphrase"]
+            .as_str()
+            .map(|s| crypto::secret::SecretBytes::from_slice(s.as_bytes()));
+        let folder = Some(request["folder"].as_i64().unwrap_or(4242));
+        let transport = MultipartFixture {
+            folder,
+            account: AccountGuard::open(&self.root, None)?,
+            bandwidth: self.bandwidth.clone(),
+            crypto: &self.crypto,
+            session: credential.as_ref().map(|(id, _)| *id),
+            fail_after: request["failAfter"].as_u64().map(|n| n as usize),
+            saved: Default::default(),
+            stop_on_progress: request["stopOnProgress"].as_str().map(str::to_string),
+            stopped: Default::default(),
+            progress: Default::default(),
+        };
+        let credentials = crate::multipart::Credentials {
+            mode,
+            vault: key,
+            passphrase: passphrase.as_ref(),
+        };
+        match text(request, "command")? {
+            "multipart_upload" => {
+                let result = crate::multipart::upload(
+                    &transport,
+                    &child(&self.root, text(request, "source")?)?,
+                    folder,
+                    &credentials,
+                    request["objectLimit"].as_u64().unwrap_or(2_000_000_000),
+                )
+                .await?;
+                Ok(
+                    json!({"message":result.message,"parts":result.parts,"resumed":result.resumed,"progress":*transport.progress.lock().unwrap()}),
+                )
+            }
+            "multipart_policy" => Ok(json!({
+                "capacity":crate::multipart::capacity(mode, request["objectLimit"].as_u64().unwrap_or(2_000_000_000))?,
+                "split":crate::multipart::needs_split(request["length"].as_u64().unwrap_or(0), mode, request["metadataLength"].as_u64().unwrap_or(0) as usize)?
+            })),
+            "multipart_download" => {
+                let result = crate::multipart::download(
+                    &transport,
+                    request["message"].as_i64().ok_or("Missing message")? as i32,
+                    folder,
+                    &child(&self.root, text(request, "destination")?)?,
+                    &credentials,
+                    request
+                        .get("collisionPolicy")
+                        .map(|value| serde_json::from_value(value.clone()))
+                        .transpose()
+                        .map_err(error)?
+                        .unwrap_or(download_destination::DownloadCollisionPolicy::Replace),
+                )
+                .await?;
+                Ok(json!(result))
+            }
+            "multipart_inspect" => Ok(json!(
+                crate::multipart::read_manifest(
+                    &transport,
+                    request["message"].as_i64().ok_or("Missing message")? as i32,
+                    folder,
+                    &credentials
+                )
+                .await?
+            )),
+            "multipart_delete" => {
+                crate::multipart::operations::delete(
+                    &transport,
+                    request["message"].as_i64().ok_or("Missing message")? as i32,
+                    folder,
+                    &credentials,
+                )
+                .await?;
+                Ok(Value::Null)
+            }
+            "multipart_move" => {
+                let target_folder = Some(
+                    request["targetFolder"]
+                        .as_i64()
+                        .ok_or("Missing target folder")?,
+                );
+                let target = MultipartFixture {
+                    folder: target_folder,
+                    account: transport.account.clone(),
+                    bandwidth: self.bandwidth.clone(),
+                    crypto: &self.crypto,
+                    session: transport.session,
+                    fail_after: transport.fail_after,
+                    saved: Default::default(),
+                    stop_on_progress: None,
+                    stopped: Default::default(),
+                    progress: Default::default(),
+                };
+                let id = crate::multipart::operations::move_file(
+                    &transport,
+                    &target,
+                    request["message"].as_i64().ok_or("Missing message")? as i32,
+                    folder,
+                    target_folder,
+                    &credentials,
+                )
+                .await?;
+                Ok(json!({"message":id}))
+            }
+            "multipart_remote" => {
+                let documents = transport.documents()?;
+                let manifests: Vec<_> = documents
+                    .iter()
+                    .filter(|r| crate::multipart::is_manifest(&r.caption))
+                    .collect();
+                Ok(json!({"documents":documents,"manifests":manifests}))
+            }
+            "multipart_recovery" => Ok(json!(
+                crate::multipart::recovery::list(&transport, &credentials).await?
+            )),
+            "multipart_cleanup" => {
+                crate::multipart::recovery::cleanup(
+                    &transport,
+                    folder,
+                    text(request, "group")?,
+                    &credentials,
+                )
+                .await?;
+                Ok(Value::Null)
+            }
+            "multipart_fault" => {
+                let directory = transport.directory()?;
+                let documents = transport.documents()?;
+                let part = documents
+                    .iter()
+                    .find(|r| crate::multipart::is_part(&r.caption))
+                    .ok_or("No piece")?;
+                let path = directory.join(format!("{}.bin", part.id));
+                match text(request, "fault")? {
+                    "missing" => std::fs::remove_file(path).map_err(error)?,
+                    "truncated" => {
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .open(path)
+                            .map_err(error)?
+                            .set_len(part.size.saturating_sub(1))
+                            .map_err(error)?;
+                    }
+                    "corrupt" => {
+                        let mut bytes = std::fs::read(&path).map_err(error)?;
+                        let last = bytes.len() - 1;
+                        bytes[last] ^= 1;
+                        std::fs::write(path, bytes).map_err(error)?;
+                    }
+                    "trailing" => {
+                        let mut file = std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(path)
+                            .map_err(error)?;
+                        file.write_all(b"extra").map_err(error)?;
+                    }
+                    "swap" => {
+                        let other = documents
+                            .iter()
+                            .filter(|r| crate::multipart::is_part(&r.caption))
+                            .nth(1)
+                            .ok_or("No second piece")?;
+                        std::fs::copy(directory.join(format!("{}.bin", other.id)), path)
+                            .map_err(error)?;
+                    }
+                    "manifest" => {
+                        let manifest = documents
+                            .iter()
+                            .find(|r| crate::multipart::is_manifest(&r.caption))
+                            .ok_or("No manifest")?;
+                        std::fs::write(directory.join(format!("{}.bin", manifest.id)), b"corrupt")
+                            .map_err(error)?;
+                    }
+                    _ => return Err("Unknown multipart fixture fault".into()),
+                }
+                Ok(Value::Null)
+            }
+            _ => Err("Unknown multipart fixture command".into()),
         }
     }
 

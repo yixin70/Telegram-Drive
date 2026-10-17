@@ -276,6 +276,7 @@ pub async fn cmd_prepare_fmp4_stream(
         let peer = crate::commands::utils::resolve_peer(&client, folder_id, &state.peer_cache).await?;
         let message = client.get_messages_by_id(&peer, &[message_id]).await.map_err(|e| e.to_string())?
             .into_iter().flatten().next().ok_or("Message not found")?;
+        crate::multipart::reject_message(&message)?;
         let media = message.media().ok_or("No media")?;
         if message.text() == "TDENC2"
             || matches!(&media, grammers_client::types::Media::Document(document) if document.name().to_ascii_lowercase().ends_with(".tdenc")) {

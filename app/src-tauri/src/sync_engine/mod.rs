@@ -844,6 +844,9 @@ fn photo_file_name(message_id: i32) -> String {
 }
 
 fn remote_file_from_message(message: &grammers_client::types::Message) -> Option<RemoteFile> {
+    if crate::multipart::reject_message(message).is_err() {
+        return None;
+    }
     let media = message.media()?;
     let (document_name, media_id) = match &media {
         grammers_client::types::Media::Document(document) => {
