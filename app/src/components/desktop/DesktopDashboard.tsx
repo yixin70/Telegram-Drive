@@ -1010,9 +1010,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             )}
 
             {textViewFile && (
-                <LazyFeatureBoundary key={`text:${previewFileKey(textViewFile)}`}>
+                <LazyFeatureBoundary key="text">
                     <LazyTextViewerModal
                         file={textViewFile}
+                        ownerId={accountId ?? undefined}
                         onClose={() => setTextViewFile(null)}
                         onNext={handleNextPreview}
                         onPrev={handlePrevPreview}

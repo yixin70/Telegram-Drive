@@ -1572,6 +1572,8 @@ impl Driver {
             | "vault_save_profile"
             | "envelope_known_answer"
             | "fixture_encrypt"
+            | "text_read"
+            | "text_replace"
             | "read_envelope" => self.dispatch_crypto(request).await,
             "folder_create" | "folder_delete" | "folder_rename" | "folder_layout"
             | "folder_scan" | "group_create" | "folder_assign" | "folder_sign_out"
@@ -4526,6 +4528,7 @@ impl Driver {
             }
             "envelope_known_answer" => self.known_answer(&request).await,
             "fixture_encrypt" => self.create_encrypted_fixture(&request).await,
+            "text_read" | "text_replace" => self.text_document(&request).await,
             "read_envelope" => self.read_envelope(&request).await,
             _ => Err("Unknown crypto E2E command".into()),
         }
@@ -5240,8 +5243,36 @@ impl Driver {
     async fn create_encrypted_fixture(&self, request: &Value) -> Result<Value, String> {
         let source = child(&self.root, text(request, "source")?)?;
         let destination = child(&self.root, text(request, "destination")?)?;
-        let input = tokio::fs::File::open(source).await.map_err(error)?;
+        let input = tokio::fs::File::open(&source).await.map_err(error)?;
         let size = input.metadata().await.map_err(error)?.len();
+        if request["text"] == true {
+            let mode = request["protectionMode"].as_str().unwrap_or("vault");
+            let vault = self.crypto.get_current_wrapping_key().ok();
+            let passphrase = request["filePassphrase"]
+                .as_str()
+                .map(|value| crypto::secret::SecretBytes::from_slice(value.as_bytes()));
+            let stream = crate::commands::fs::protected_upload_stream_off_worker(
+                input,
+                size,
+                mode,
+                vault.as_ref().filter(|_| mode != "passphrase"),
+                passphrase.as_ref().filter(|_| mode != "vault"),
+                crate::commands::fs::protected_metadata_bytes(
+                    &source.to_string_lossy(),
+                    true,
+                    Some("notes/private.txt"),
+                )?,
+                None,
+            )
+            .await?;
+            let mut reader = stream.reader;
+            let mut output = tokio::fs::File::create(destination).await.map_err(error)?;
+            tokio::io::copy(&mut reader, &mut output)
+                .await
+                .map_err(error)?;
+            output.sync_all().await.map_err(error)?;
+            return Ok(json!({"ciphertextBytes":stream.ciphertext_size}));
+        }
         let vault_key = self.crypto.get_current_wrapping_key().map_err(error)?;
         let dek = SecretKey::new(crypto::random::random_key());
         let uuid = crypto::random::random_uuid();
@@ -5599,6 +5630,52 @@ impl Driver {
         }
     }
 
+    async fn text_document(&self, request: &Value) -> Result<Value, String> {
+        let source = child(&self.root, text(request, "source")?)?;
+        let bytes = tokio::fs::read(&source).await.map_err(error)?;
+        let parsed = EnvelopeHeader::parse(&bytes).map_err(error)?;
+        let header = bytes[..parsed.core.header_length as usize].to_vec();
+        let token = request["filePassphrase"]
+            .as_str()
+            .map(|value| self.crypto.stage_prompt_secret(value.as_bytes()))
+            .transpose()
+            .map_err(error)?;
+        let access = crate::text_documents::Access::open(
+            AccountGuard::open(&self.root, request["owner"].as_str())?,
+            self.crypto.clone(),
+            header,
+            token,
+            request["generation"].as_u64(),
+        )
+        .await?;
+        let destination = child(
+            &self.root,
+            request["destination"]
+                .as_str()
+                .unwrap_or("text-replacement.tdenc"),
+        )?;
+        let remote = TextDocumentRemote {
+            source,
+            destination,
+            crypto: self.crypto.clone(),
+            lock_on_download: request["lockOnDownload"] == true,
+            fail_publish: request["failPublish"] == true,
+            fail_delete: request["failDelete"] == true,
+        };
+        if request["command"] == "text_read" {
+            let content = access.read(&remote).await?;
+            let slot_kinds: Vec<_> = parsed.key_slots.iter().map(|slot| slot.kind).collect();
+            Ok(
+                json!({"content":content,"generation":access.generation,"fileUuid":parsed.core.file_uuid,"slotKinds":slot_kinds}),
+            )
+        } else {
+            let id = access
+                .replace(&remote, text(request, "content")?.to_string())
+                .await?;
+            Ok(json!({"messageId":id}))
+        }
+    }
+
     async fn read_envelope(&self, request: &Value) -> Result<Value, String> {
         let source = child(&self.root, text(request, "source")?)?;
         let destination = child(&self.root, text(request, "destination")?)?;
@@ -5627,6 +5704,56 @@ impl Driver {
             .await
             .map_err(error)?;
         Ok(json!({"plaintextBytes":plaintext.len()}))
+    }
+}
+
+/// Controlled ciphertext-only remote transport; the editor and envelope service
+/// are the same implementations used by the Tauri commands.
+struct TextDocumentRemote {
+    source: PathBuf,
+    destination: PathBuf,
+    crypto: CryptoState,
+    lock_on_download: bool,
+    fail_publish: bool,
+    fail_delete: bool,
+}
+
+impl crate::text_documents::Remote for TextDocumentRemote {
+    async fn download(&self, maximum: u64) -> Result<Vec<u8>, String> {
+        let bytes = tokio::fs::read(&self.source).await.map_err(error)?;
+        if bytes.len() as u64 > maximum {
+            return Err("[WRONG_KEY_OR_CORRUPT] Too large".into());
+        }
+        if self.lock_on_download {
+            self.crypto.lock();
+        }
+        Ok(bytes)
+    }
+    async fn publish(
+        &self,
+        upload: crate::text_documents::Upload,
+        authorize: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<i32, String> {
+        authorize()?;
+        if self.fail_publish {
+            return Err("Controlled send failure".into());
+        }
+        let mut output = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.destination)
+            .await
+            .map_err(error)?;
+        use tokio::io::AsyncWriteExt;
+        output.write_all(&upload.bytes).await.map_err(error)?;
+        output.sync_all().await.map_err(error)?;
+        Ok(9001)
+    }
+    async fn delete(&self) -> Result<(), String> {
+        if self.fail_delete {
+            return Err("Controlled delete failure".into());
+        }
+        tokio::fs::remove_file(&self.source).await.map_err(error)
     }
 }
 

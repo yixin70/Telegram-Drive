@@ -23,6 +23,9 @@ export async function desktopFixture(page: Page, options: {
   pdfBase64?: string;
   /** Plain-text body listed as "Fixture notes.txt" and served through the text commands. */
   textContent?: string;
+  protectedText?: boolean;
+  textRequirePassphrase?: 'read' | 'save';
+  holdTextRead?: boolean;
   heicBase64?: string;
   heicJpegBase64?: string;
   heicDecoderMissing?: boolean;
@@ -64,7 +67,12 @@ export async function desktopFixture(page: Page, options: {
     const savedTransfers = options.persistTransfersAcrossReload ? JSON.parse(sessionStorage.getItem('desktop-e2e-native-transfers') || 'null') : null;
     let releaseNotes: (() => void) | undefined;
     const notesGate = new Promise<void>(resolve => {releaseNotes = resolve;});
+    let releaseText: (() => void) | undefined;
+    const textGate = new Promise<void>(resolve => { releaseText = resolve; });
     const state = {
+      textContent: options.textContent, textMessageId: 88,
+      textSaveFails: false, holdTextRead: options.holdTextRead ?? false,
+      releaseText: () => { state.holdTextRead = false; releaseText?.(); },
       notes: JSON.parse(sessionStorage.getItem('desktop-e2e-native-notes') || '{}') as Record<string, {text: string; revision: number}>,
       holdNotes: options.holdNotes ?? false, notesSaveFails: false, notesConflict: false, notesBackupFails: false,
       releaseNotes: () => {state.holdNotes = false; releaseNotes?.();},
@@ -226,7 +234,7 @@ export async function desktopFixture(page: Page, options: {
             const files = [{ ...file(42, args.folderId, owner), ...(state.inventoryName ? { name: state.inventoryName } : {}) }];
             if (options.extraPhoto) files.push({...file(43,args.folderId,owner),name:'Holiday second photo.jpg'});
             if (options.pdfBase64) files.push({ ...file(77, args.folderId, owner), name: 'Fixture report.pdf', mime_type: 'application/pdf', file_ext: 'pdf', type: 'document' });
-            if (options.textContent !== undefined) files.push({ ...file(88, args.folderId, owner), name: 'Fixture notes.txt', mime_type: 'text/plain', file_ext: 'txt', type: 'document' });
+            if (options.textContent !== undefined) files.push({ ...file(state.textMessageId, args.folderId, owner), name: 'Fixture notes.txt', mime_type: 'text/plain', file_ext: 'txt', type: 'document', encryption_state: options.protectedText ? 'encrypted_unlocked' : 'plain' });
             const result = { ownerId: owner, folderId: args.folderId, requestId: args.requestId, files };
             state.emit('folder-load-chunk', result);
             state.completedFileRequests.push({ ownerId: owner, requestId: args.requestId });
@@ -238,8 +246,17 @@ export async function desktopFixture(page: Page, options: {
           }
           if (command === 'cmd_get_preview' && options.heicBase64) return `data:image/heic;base64,${options.heicBase64}`;
           if (command === 'cmd_get_preview' && args.messageId === 77 && options.pdfBase64) return `data:application/pdf;base64,${options.pdfBase64}`;
-          if (command === 'cmd_read_text_file' && options.textContent !== undefined) return { content: options.textContent, size: options.textContent.length, truncated: false, encoding: 'utf-8' };
-          if (command === 'cmd_save_text_file') return { message_id: 9999, size: String(args.content ?? '').length };
+          if (command === 'cmd_read_text_file' && state.textContent !== undefined) {
+            if (options.textRequirePassphrase === 'read' && !args.promptToken) throw '[KEY_REQUIRED] File passphrase required';
+            if (state.holdTextRead) await textGate;
+            return { content: state.textContent, size: new TextEncoder().encode(state.textContent).length, truncated: false, encoding: 'utf-8', encrypted: options.protectedText ?? false, ownerId: '101', accessGeneration: 1 };
+          }
+          if (command === 'cmd_save_text_file') {
+            if (options.textRequirePassphrase && !args.promptToken) throw '[KEY_REQUIRED] File passphrase required';
+            if (state.textSaveFails) throw 'Controlled text save failure';
+            state.textContent = String(args.content ?? ''); state.textMessageId++;
+            return { messageId: state.textMessageId, size: new TextEncoder().encode(state.textContent).length };
+          }
           if (command === 'cmd_get_stream_info') return { token: 'browser-fixture-token', base_url: `http://localhost:${options.streamingPort ?? 14201}`, operation_token: options.protectedVideo ? '9007199254740993' : null };
           if (command === 'cmd_get_thumbnail' && options.video) {
             if (options.videoThumbnailUnavailable) throw new Error('THUMBNAIL_UNAVAILABLE');

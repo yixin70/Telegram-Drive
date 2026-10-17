@@ -460,6 +460,9 @@ pub struct TextFilePayload {
     size: u64,
     truncated: bool,
     encoding: String,
+    encrypted: bool,
+    owner_id: Option<String>,
+    access_generation: Option<u64>,
 }
 
 /// Decodes plain-text bytes, dropping a UTF-8 BOM and replacing invalid
@@ -475,13 +478,53 @@ fn decode_text(bytes: &[u8]) -> String {
 pub async fn cmd_read_text_file(
     message_id: i32,
     folder_id: Option<i64>,
+    prompt_token: Option<u64>,
+    owner_id: Option<String>,
     app_handle: tauri::AppHandle,
-    _state: State<'_, TelegramState>,
-    _bw_state: State<'_, Arc<BandwidthManager>>,
-    _net_config: State<'_, Arc<NetworkConfig>>,
-    _db_pool: State<'_, DbConnection>,
 ) -> Result<TextFilePayload, String> {
-    let path = compat_asset(app_handle, folder_id, message_id, false).await?;
+    let account = AccountGuard::open(
+        &app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?,
+        owner_id.as_deref(),
+    )?;
+    // Preserve cached/offline reads for ordinary files. The existing asset
+    // guard still rejects protected content, even with stale inventory data.
+    let plain_path = if can_use_plain_preview(&account, folder_id, message_id).await? {
+        match compat_asset(app_handle.clone(), folder_id, message_id, false).await {
+            Ok(path) => Some(path),
+            Err(error) if error.contains("ENCRYPTED_PREVIEW_UNAVAILABLE") => None,
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
+    if plain_path.is_none() {
+        if let Some((content, owner, generation)) = super::fs::read_protected_text(
+            &app_handle,
+            message_id,
+            folder_id,
+            prompt_token,
+            owner_id.as_deref(),
+        )
+        .await?
+        {
+            return Ok(TextFilePayload {
+                size: content.len() as u64,
+                content,
+                truncated: false,
+                encoding: "utf-8".into(),
+                encrypted: true,
+                owner_id: Some(owner),
+                access_generation: Some(generation),
+            });
+        }
+    }
+    let path = match plain_path {
+        Some(path) => path,
+        None => compat_asset(app_handle, folder_id, message_id, false).await?,
+    };
     let size = tokio::fs::metadata(&path)
         .await
         .map_err(|error| error.to_string())?
@@ -511,11 +554,15 @@ pub async fn cmd_read_text_file(
             .await
             .map_err(|error| error.to_string())?
     };
+    account.validate()?;
     Ok(TextFilePayload {
         content: decode_text(&bytes),
         size,
         truncated,
         encoding: "utf-8".to_string(),
+        encrypted: false,
+        owner_id: Some(account.owner.to_string()),
+        access_generation: None,
     })
 }
 

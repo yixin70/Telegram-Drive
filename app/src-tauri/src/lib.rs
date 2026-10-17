@@ -80,6 +80,7 @@ pub mod socks5_bridge;
 pub mod startup_failure;
 mod startup_smoke;
 pub mod temp_artifacts;
+mod text_documents;
 mod traffic;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod transfer_engine;

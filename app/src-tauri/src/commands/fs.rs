@@ -311,6 +311,20 @@ fn protection_mode_from_header(header: &EnvelopeHeader) -> Result<&'static str, 
     }
 }
 
+pub(crate) fn text_protection_mode(header: &EnvelopeHeader) -> Result<&'static str, String> {
+    let mut kinds = std::collections::HashSet::new();
+    for slot in &header.key_slots {
+        if !matches!(slot.kind, kind if kind == policy::SlotKind::Vault as u8 || kind == policy::SlotKind::Passphrase as u8)
+            || !kinds.insert(slot.kind)
+        {
+            return Err(
+                "[TEXT_TYPE_UNSUPPORTED] Editing must preserve every encryption slot".into(),
+            );
+        }
+    }
+    protection_mode_from_header(header)
+}
+
 fn registry_record_from_header(
     folder_id: Option<i64>,
     message_id: i32,
@@ -3598,6 +3612,191 @@ pub async fn cmd_delete_file(
 /// Largest `.txt` payload `cmd_save_text_file` accepts, in bytes.
 const MAX_EDITABLE_TEXT_BYTES: usize = 1024 * 1024;
 
+/// The protected editor never uses the ordinary plaintext preview cache.
+struct TextRemote {
+    account: crate::workspace::AccountGuard,
+    client: grammers_client::Client,
+    peer: grammers_client::types::Peer,
+    media: Media,
+    folder: Option<i64>,
+    message: i32,
+    bandwidth: Arc<BandwidthManager>,
+    network: Arc<NetworkConfig>,
+    db: DbConnection,
+}
+
+impl crate::text_documents::Remote for TextRemote {
+    async fn download(&self, maximum: u64) -> Result<Vec<u8>, String> {
+        let mut reservation = BandwidthReservation::download(self.bandwidth.clone(), maximum)?;
+        let mut download = self.client.iter_download(&self.media);
+        let mut bytes = Vec::new();
+        let traffic = crate::traffic::Traffic {
+            network: self.network.clone(),
+            account: self.account.clone(),
+            direction: crate::traffic::Direction::Download,
+        };
+        while let Some(chunk) = download.next().await.map_err(|e| map_error(&e))? {
+            self.account.validate()?;
+            if bytes.len() as u64 + chunk.len() as u64 > maximum {
+                return Err(
+                    "[WRONG_KEY_OR_CORRUPT] Document exceeds its authenticated size".into(),
+                );
+            }
+            traffic.wait(chunk.len()).await?;
+            bytes.extend_from_slice(&chunk);
+        }
+        reservation.commit();
+        Ok(bytes)
+    }
+
+    async fn publish(
+        &self,
+        upload: crate::text_documents::Upload,
+        authorize: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<i32, String> {
+        let total = upload.bytes.len() as u64;
+        let mut reservation = BandwidthReservation::upload(self.bandwidth.clone(), total)?;
+        let (_cancel, mut cancel_rx) = oneshot::channel::<()>();
+        let mut reader = upload.bytes.as_slice();
+        let uploaded = match send_upload_stream(
+            &self.client,
+            None,
+            &mut reader,
+            total,
+            upload.remote_name.clone(),
+            Some(&upload.header),
+            &mut cancel_rx,
+            crate::traffic::Traffic {
+                network: self.network.clone(),
+                account: self.account.clone(),
+                direction: crate::traffic::Direction::Upload,
+            },
+        )
+        .await?
+        {
+            SentParts::Done { file, .. } => file,
+            _ => return Err("Encrypted text upload did not complete".into()),
+        };
+        authorize()?;
+        self.account.validate_client(&self.client).await?;
+        authorize()?;
+        let sent = self
+            .client
+            .send_message(
+                &self.peer,
+                InputMessage::new().text("TDENC2").file(uploaded),
+            )
+            .await
+            .map_err(map_error)?;
+        reservation.commit();
+        let record = registry_record_from_header(
+            self.folder,
+            sent.id(),
+            upload.remote_name,
+            total,
+            upload.header,
+            "ok",
+        )?;
+        let account = self.account.clone();
+        crate::db::with_connection(self.db.clone(), move |connection| {
+            account.validate()?;
+            upsert_encrypted_file(connection, &record).map_err(|e| e.to_string())?;
+            account.validate()
+        })
+        .await?;
+        self.account.validate()?;
+        Ok(sent.id())
+    }
+
+    async fn delete(&self) -> Result<(), String> {
+        self.account.validate()?;
+        self.client
+            .delete_messages(&self.peer, &[self.message])
+            .await
+            .map_err(|e| map_error(&e))?;
+        if let Err(error) = crate::workspace::remote_changes::record(
+            &self.account,
+            vec![crate::workspace::remote_changes::Change::Delete {
+                folder: self.folder,
+                message: self.message,
+            }],
+        )
+        .await
+        {
+            log::warn!("Could not reconcile replaced protected text: {error}");
+        }
+        Ok(())
+    }
+}
+
+pub(crate) async fn read_protected_text(
+    app: &tauri::AppHandle,
+    message_id: i32,
+    folder_id: Option<i64>,
+    prompt_token: Option<u64>,
+    owner_id: Option<&str>,
+) -> Result<Option<(String, String, u64)>, String> {
+    let account = file_mutation_account(app, owner_id)?;
+    let state = app.state::<TelegramState>();
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
+    let messages = client
+        .get_messages_by_id(&peer, &[message_id])
+        .await
+        .map_err(map_error)?;
+    let message = messages
+        .first()
+        .and_then(Option::as_ref)
+        .ok_or("FILE_NOT_FOUND")?;
+    crate::multipart::reject_message(message)?;
+    let media = message.media().ok_or("FILE_NOT_FOUND")?;
+    let Some(envelope) = resolve_remote_envelope(
+        &account,
+        &client,
+        folder_id,
+        message_id,
+        &media,
+        message.text(),
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let access = crate::text_documents::Access::open(
+        account.clone(),
+        app.state::<crate::crypto::state::CryptoState>()
+            .inner()
+            .clone(),
+        envelope.header_blob.ok_or("Encrypted header is missing")?,
+        prompt_token,
+        None,
+    )
+    .await?;
+    let remote = TextRemote {
+        account: account.clone(),
+        client,
+        peer,
+        media,
+        folder: folder_id,
+        message: message_id,
+        bandwidth: app.state::<Arc<BandwidthManager>>().inner().clone(),
+        network: app.state::<Arc<NetworkConfig>>().inner().clone(),
+        db: app.state::<DbConnection>().inner().clone(),
+    };
+    let content = access.read(&remote).await?;
+    Ok(Some((
+        content,
+        account.owner.to_string(),
+        access.generation,
+    )))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedTextFile {
@@ -3615,13 +3814,15 @@ pub async fn cmd_save_text_file(
     message_id: i32,
     folder_id: Option<i64>,
     content: String,
-    state: State<'_, TelegramState>,
-    bw_state: State<'_, Arc<BandwidthManager>>,
-    net_config: State<'_, Arc<NetworkConfig>>,
-    _db_pool: State<'_, DbConnection>,
     app: tauri::AppHandle,
     owner_id: Option<String>,
+    prompt_token: Option<u64>,
+    access_generation: Option<u64>,
 ) -> Result<SavedTextFile, String> {
+    let state = app.state::<TelegramState>();
+    let bw_state = app.state::<Arc<BandwidthManager>>();
+    let net_config = app.state::<Arc<NetworkConfig>>();
+    let db_pool = app.state::<DbConnection>();
     if content.len() > MAX_EDITABLE_TEXT_BYTES {
         return Err("[TEXT_TOO_LARGE] This text file is too large to edit in the app".into());
     }
@@ -3645,7 +3846,7 @@ pub async fn cmd_save_text_file(
         .ok_or("The file was not found; refresh the folder")?;
     crate::multipart::reject_message(message)?;
     if let Some(media) = message.media() {
-        if resolve_remote_envelope(
+        if let Some(envelope) = resolve_remote_envelope(
             &account,
             &client,
             folder_id,
@@ -3654,12 +3855,36 @@ pub async fn cmd_save_text_file(
             message.text(),
         )
         .await?
-        .is_some()
         {
-            return Err(
-                "[ENCRYPTED_EDIT_UNAVAILABLE] Editing encrypted text files is not yet available"
-                    .into(),
-            );
+            if owner_id.is_none() || access_generation.is_none() {
+                return Err("[VAULT_LOCKED] Open this protected text before editing it".into());
+            }
+            let access = crate::text_documents::Access::open(
+                account.clone(),
+                app.state::<crate::crypto::state::CryptoState>()
+                    .inner()
+                    .clone(),
+                envelope.header_blob.ok_or("Encrypted header is missing")?,
+                prompt_token,
+                access_generation,
+            )
+            .await?;
+            let remote = TextRemote {
+                account: account.clone(),
+                client,
+                peer,
+                media,
+                folder: folder_id,
+                message: message_id,
+                bandwidth: bw_state.inner().clone(),
+                network: net_config.inner().clone(),
+                db: db_pool.inner().clone(),
+            };
+            let size = content.len() as u64;
+            let result = access.replace(&remote, content).await;
+            // Also re-list on an ambiguous send/delete failure. Never blindly retry.
+            crate::file_inventory::changed(&account, folder_id, &[])?;
+            return result.map(|message_id| SavedTextFile { message_id, size });
         }
     }
     // Keep the name the file currently shows: the caption when a rename set it,

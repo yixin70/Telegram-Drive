@@ -184,6 +184,130 @@ impl Drop for Backend {
 }
 
 #[test]
+fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
+    for mode in ["vault", "passphrase", "vault_and_passphrase"] {
+        let fixture = Fixture::new();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+        fixture.write("private.txt", b"original secret\r\n");
+        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,
+            "protectionMode":mode,"filePassphrase":"synthetic file password"}));
+        std::fs::remove_file(fixture.path("private.txt")).unwrap();
+        let original = fixture.read("original.tdenc");
+        let opened = app.ok(json!({"command":"text_read","source":"original.tdenc","filePassphrase":"synthetic file password"}));
+        assert_eq!(opened["content"], "original secret\r\n");
+        assert_eq!(
+            opened["slotKinds"].as_array().unwrap().len(),
+            if mode == "vault_and_passphrase" { 2 } else { 1 }
+        );
+        app.ok(json!({"command":"text_replace","source":"original.tdenc","destination":"edited.tdenc",
+            "content":"edited secret 日本語\r\n","filePassphrase":"synthetic file password","generation":opened["generation"]}));
+        assert!(!fixture.path("original.tdenc").exists());
+        let edited = fixture.read("edited.tdenc");
+        assert_ne!(original, edited);
+        assert!(!edited
+            .windows(b"edited secret".len())
+            .any(|w| w == b"edited secret"));
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        if mode != "passphrase" {
+            app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+        }
+        let reopened = app.ok(json!({"command":"text_read","source":"edited.tdenc","filePassphrase":"synthetic file password"}));
+        assert_eq!(reopened["content"], "edited secret 日本語\r\n");
+        assert_ne!(reopened["fileUuid"], opened["fileUuid"]);
+        assert_eq!(reopened["slotKinds"], opened["slotKinds"]);
+        if mode == "vault_and_passphrase" {
+            // Vault alone still reads it; passphrase alone still reads it.
+            assert_eq!(
+                app.ok(json!({"command":"text_read","source":"edited.tdenc"}))["content"],
+                "edited secret 日本語\r\n"
+            );
+            app.ok(json!({"command":"vault_lock"}));
+            assert_eq!(app.ok(json!({"command":"text_read","source":"edited.tdenc","filePassphrase":"synthetic file password"}))["content"], "edited secret 日本語\r\n");
+        }
+        assert!(app
+            .failure(json!({"command":"text_read","source":"edited.tdenc","owner":"202"}))
+            .contains("ACCOUNT_CHANGED"));
+        assert!(!fixture.path("previews").exists());
+        if mode == "vault_and_passphrase" {
+            app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+        }
+        app.ok(json!({"command":"text_replace","source":"edited.tdenc","destination":"empty.tdenc","content":"","filePassphrase":"synthetic file password"}));
+        assert_eq!(app.ok(json!({"command":"text_read","source":"empty.tdenc","filePassphrase":"synthetic file password"}))["content"], "");
+        app.stop();
+    }
+}
+
+#[test]
+fn protected_text_rejects_wrong_keys_corruption_and_revoked_access_without_deleting_original() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+    fixture.write("private.txt", b"keep original");
+    app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
+    std::fs::remove_file(fixture.path("private.txt")).unwrap();
+    let original = fixture.read("original.tdenc");
+    let opened = app.ok(json!({"command":"text_read","source":"original.tdenc"}));
+    assert!(app
+        .failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost"}))
+        .contains("KEY_REQUIRED"));
+    assert!(app.failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost","filePassphrase":"wrong file password"})).contains("WRONG_KEY_OR_CORRUPT"));
+    assert!(app.failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost","filePassphrase":"file password","failPublish":true})).contains("Controlled send failure"));
+    assert_eq!(fixture.read("original.tdenc"), original);
+    assert!(!fixture.path("text-replacement.tdenc").exists());
+    app.ok(json!({"command":"vault_lock"}));
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+    assert!(app.failure(json!({"command":"text_replace","source":"original.tdenc","content":"stale","filePassphrase":"file password","generation":opened["generation"]})).contains("VAULT_LOCKED"));
+    assert!(app
+        .failure(json!({"command":"text_read","source":"original.tdenc","lockOnDownload":true}))
+        .contains("VAULT_LOCKED"));
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+    let mut corrupt = original.clone();
+    let end = corrupt.len() - 1;
+    corrupt[end] ^= 1;
+    fixture.write("corrupt.tdenc", corrupt);
+    assert!(app.failure(json!({"command":"text_replace","source":"corrupt.tdenc","content":"lost","filePassphrase":"file password"})).contains("WRONG_KEY_OR_CORRUPT"));
+    assert!(app.failure(json!({"command":"text_replace","source":"original.tdenc","content":"x".repeat(1024*1024+1),"filePassphrase":"file password"})).contains("TEXT_TOO_LARGE"));
+    assert_eq!(fixture.read("original.tdenc"), original);
+    let delete_failure = app.failure(json!({
+        "command":"text_replace", "source":"original.tdenc",
+        "content":"recoverable copy", "filePassphrase":"file password",
+        "failDelete":true, "destination":"copy.tdenc"
+    }));
+    assert!(delete_failure.contains("Controlled delete failure"));
+    assert_eq!(fixture.read("original.tdenc"), original);
+    assert_eq!(
+        app.ok(json!({"command":"text_read","source":"copy.tdenc"}))["content"],
+        "recoverable copy"
+    );
+    app.stop();
+}
+
+#[test]
+fn protected_text_read_enforces_the_one_mib_boundary_without_a_preview_cache() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+    for size in [1024 * 1024, 1024 * 1024 + 1] {
+        fixture.write("private.txt", vec![b'a'; size]);
+        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":format!("{size}.tdenc"),"text":true}));
+        std::fs::remove_file(fixture.path("private.txt")).unwrap();
+        let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
+        if size == 1024 * 1024 {
+            assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
+        } else {
+            assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+        }
+    }
+    assert!(!fixture.path("previews").exists());
+    app.stop();
+}
+
+#[test]
 fn notes_persist_across_processes_and_keep_account_and_revision_boundaries() {
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);

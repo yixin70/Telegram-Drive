@@ -468,6 +468,30 @@ impl CryptoState {
         })
     }
 
+    /// Revokes in-memory text access on lock, unlock or credential changes,
+    /// including documents authorized with a file passphrase instead of a vault.
+    pub(crate) fn text_access_generation(&self) -> u64 {
+        self.inner
+            .lock()
+            .map(|inner| inner.revision)
+            .unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn with_text_access<T>(
+        &self,
+        generation: u64,
+        publish: impl FnOnce() -> T,
+    ) -> CryptoResult<T> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| CryptoError::internal("Lock poisoned"))?;
+        if inner.revision != generation {
+            return Err(CryptoError::vault_locked());
+        }
+        Ok(publish())
+    }
+
     /// A nonsecret fence for file-scoped authorization, including passphrase-only files.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub(crate) fn notes_generation(&self) -> u64 {

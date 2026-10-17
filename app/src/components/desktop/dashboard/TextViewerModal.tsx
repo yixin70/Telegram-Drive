@@ -1,18 +1,25 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, ChevronLeft, ChevronRight, Save, RotateCcw, FileText } from 'lucide-react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { TelegramFile } from '../../../types';
 import i18n from '../../../i18n';
 import { invalidateFolderFileQueries } from '../../../services/fileListRefresh';
+import { useConfirm } from '../../../context/ConfirmContext';
+
+const VaultUnlockDialog = lazy(() => import('./VaultUnlockDialog'));
 
 interface TextFilePayload {
     content: string;
     size: number;
     truncated: boolean;
     encoding: string;
+    encrypted?: boolean;
+    ownerId?: string;
+    accessGeneration?: number;
 }
 
 interface SavedTextFile {
@@ -29,12 +36,16 @@ interface TextViewerModalProps {
     totalItems?: number;
     activeFolderId: number | null;
     localPath?: string;
+    ownerId?: string;
     onSaved?: (messageId: number) => void;
 }
 
-export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, localPath, onSaved }: TextViewerModalProps) {
+export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, localPath, ownerId, onSaved }: TextViewerModalProps) {
     useTranslation();
     const queryClient = useQueryClient();
+    const { promptSecret } = useConfirm();
+    const promptRef = useRef(promptSecret);
+    promptRef.current = promptSecret;
     const [content, setContent] = useState('');
     const [original, setOriginal] = useState('');
     const [loading, setLoading] = useState(true);
@@ -45,33 +56,96 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
     // The replacement message gets a new id after a save, so track it locally.
     const [messageId, setMessageId] = useState(file.id);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [access, setAccess] = useState<Pick<TextFilePayload, 'encrypted' | 'ownerId' | 'accessGeneration'>>({});
+    const [unlockVault, setUnlockVault] = useState(false);
+    const [reload, setReload] = useState(0);
+    const pending = useRef(false);
+    const prompting = useRef(false);
+    const epoch = useRef(0);
+    const savedIdentity = useRef<string | null>(null);
+    const initialOwner = useRef(ownerId);
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+    const protectedFile = Boolean(access.encrypted || (file.encryption_state && file.encryption_state !== 'plain'));
+
+    useEffect(() => {
+        if (initialOwner.current !== ownerId) {
+            epoch.current++;
+            setContent(''); setOriginal(''); setAccess({});
+            closeRef.current();
+            return;
+        }
+        let disposed = false;
+        let stop: (() => void) | undefined;
+        void listen('vault-locked', () => {
+            if (disposed) return;
+            epoch.current++;
+            setContent(''); setOriginal(''); setAccess({});
+            closeRef.current();
+        }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+        return () => { disposed = true; epoch.current++; stop?.(); };
+    }, [ownerId]);
+
+    const textCommand = useCallback(async <T,>(command: string, args: Record<string, unknown>, current: number): Promise<T | null> => {
+        try {
+            return await invoke<T>(command, args);
+        } catch (failure) {
+            // This code is returned before any upload/publication. Other save
+            // failures (including lost replies) must never be retried blindly.
+            if (!String(failure).includes('[KEY_REQUIRED]') || current !== epoch.current) throw failure;
+            prompting.current = true;
+            let secret: string | null;
+            try { secret = await promptRef.current({ title: i18n.t('settings.encryption_mode_passphrase'), minBytes: 8 }); }
+            finally { prompting.current = false; }
+            if (!secret || current !== epoch.current) return null;
+            let promptToken: number;
+            try { promptToken = await invoke<number>('cmd_stage_file_passphrase', { passphrase: secret }); }
+            finally { secret = null; }
+            if (current !== epoch.current) return null;
+            return invoke<T>(command, { ...args, promptToken });
+        }
+    }, []);
 
     const dirty = content !== original;
 
     useEffect(() => {
+        if (initialOwner.current !== ownerId) return;
+        // A successful replacement changes its Telegram id, not the document
+        // currently being edited. Keep the authenticated in-memory content and
+        // do not ask for the file passphrase again just to reload our own save.
+        if (savedIdentity.current === `${activeFolderId}:${file.id}`) {
+            savedIdentity.current = null;
+            return;
+        }
         let cancelled = false;
+        const current = ++epoch.current;
+        const stale = () => cancelled || current !== epoch.current;
         setLoading(true);
         setError(null);
         setReadOnlyReason(null);
         setMessageId(file.id);
+        setContent(''); setOriginal(''); setAccess({});
 
         const load = async () => {
             try {
-                if (localPath) {
+                if (localPath && (!file.encryption_state || file.encryption_state === 'plain')) {
                     const response = await fetch(convertFileSrc(localPath));
                     if (!response.ok) throw new Error(`HTTP ${response.status}`);
                     const text = await response.text();
-                    if (cancelled) return;
+                    if (stale()) return;
                     setContent(text);
                     setOriginal(text);
                     setLoading(false);
                     return;
                 }
-                const payload = await invoke<TextFilePayload>('cmd_read_text_file', {
+                const payload = await textCommand<TextFilePayload>('cmd_read_text_file', {
                     messageId: file.id,
                     folderId: activeFolderId,
-                });
-                if (cancelled) return;
+                    ownerId,
+                }, current);
+                if (stale()) return;
+                if (!payload) { setError(i18n.t('common.cancel')); setLoading(false); return; }
+                setAccess({ encrypted: payload.encrypted, ownerId: payload.ownerId, accessGeneration: payload.accessGeneration });
                 if (payload.truncated) {
                     setReadOnlyReason(i18n.t('viewer.text_too_large'));
                     setContent('');
@@ -82,10 +156,12 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                 }
                 setLoading(false);
             } catch (err) {
-                if (cancelled) return;
+                if (stale()) return;
                 const message = String(err);
-                if (/encrypt/i.test(message)) {
-                    setReadOnlyReason(i18n.t('viewer.text_read_only'));
+                if (message.includes('[TEXT_TOO_LARGE]')) {
+                    setReadOnlyReason(i18n.t('viewer.text_too_large'));
+                } else if (message.includes('[VAULT_LOCKED]')) {
+                    setError(i18n.t('settings.vault_is_locked'));
                 } else {
                     setError(message || i18n.t('common.operation_failed'));
                 }
@@ -94,46 +170,55 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
         };
 
         void load();
-        return () => { cancelled = true; };
-    }, [file.id, activeFolderId, localPath]);
+        return () => { cancelled = true; epoch.current++; };
+    }, [file.id, activeFolderId, localPath, file.encryption_state, reload, textCommand, ownerId]);
 
     const handleSave = useCallback(async () => {
-        if (!dirty || saving || readOnlyReason) return;
+        if (!dirty || pending.current || loading || error || readOnlyReason) return;
+        pending.current = true;
+        const current = epoch.current;
         setSaving(true);
         try {
-            const result = await invoke<SavedTextFile>('cmd_save_text_file', {
+            const result = await textCommand<SavedTextFile>('cmd_save_text_file', {
                 messageId,
                 folderId: activeFolderId,
                 content,
-            });
+                ownerId: access.ownerId ?? ownerId,
+                accessGeneration: access.accessGeneration,
+            }, current);
+            if (!result || current !== epoch.current) return;
             setOriginal(content);
             setMessageId(result.messageId);
+            savedIdentity.current = `${activeFolderId}:${result.messageId}`;
             toast.success(i18n.t('viewer.text_saved'));
-            if (activeFolderId !== null) void invalidateFolderFileQueries(queryClient, activeFolderId);
+            void invalidateFolderFileQueries(queryClient, activeFolderId, access.ownerId);
             onSaved?.(result.messageId);
         } catch (err) {
             const message = String(err);
-            if (/ENCRYPTED/i.test(message)) {
-                setReadOnlyReason(i18n.t('viewer.text_read_only'));
-                toast.error(i18n.t('viewer.text_read_only'));
+            if (current !== epoch.current) return;
+            if (message.includes('[VAULT_LOCKED]') || message.includes('ACCOUNT_CHANGED')) {
+                setContent(''); setOriginal(''); closeRef.current();
             } else if (/TEXT_TOO_LARGE/i.test(message)) {
                 toast.error(i18n.t('viewer.text_too_large'));
             } else {
                 toast.error(i18n.t('viewer.text_save_error'));
             }
             // A lost reply must never be retried blindly; re-list instead.
-            if (activeFolderId !== null) void invalidateFolderFileQueries(queryClient, activeFolderId);
+            void invalidateFolderFileQueries(queryClient, activeFolderId, access.ownerId);
         } finally {
-            setSaving(false);
+            pending.current = false;
+            if (current === epoch.current) setSaving(false);
         }
-    }, [dirty, saving, readOnlyReason, messageId, activeFolderId, content, queryClient, onSaved]);
+    }, [dirty, loading, error, readOnlyReason, messageId, activeFolderId, content, queryClient, onSaved, access, textCommand, ownerId]);
 
     const requestClose = useCallback(() => {
+        if (pending.current || prompting.current) return;
         if (dirty && !window.confirm(i18n.t('viewer.text_discard_confirm'))) return;
         onClose();
     }, [dirty, onClose]);
 
     const requestNavigate = useCallback((navigate?: () => void) => {
+        if (pending.current || prompting.current) return;
         if (!navigate) return;
         if (dirty && !window.confirm(i18n.t('viewer.text_discard_confirm'))) return;
         navigate();
@@ -141,6 +226,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (prompting.current || unlockVault) return;
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 void handleSave();
@@ -169,7 +255,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [handleSave, requestClose, requestNavigate, onNext, onPrev]);
+    }, [handleSave, requestClose, requestNavigate, onNext, onPrev, unlockVault]);
 
     const handleOpenExternally = async (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -203,14 +289,14 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
             <div className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-between px-4 pt-[calc(1rem+env(safe-area-inset-top))] md:px-6">
                 <div className="viewer-toolbar pointer-events-auto px-2">
                     <h3 className="max-w-[120px] truncate px-1 text-metadata font-medium text-white sm:max-w-xs" title={file.name}>{file.name}</h3>
-                    <button
+                    {!protectedFile && <button
                         onClick={handleOpenExternally}
                         disabled={openingExternal}
                         className="quiet-control h-7 rounded-control bg-app-accent px-2 text-badge font-semibold text-app-accent-contrast disabled:opacity-50"
                         title={i18n.t('viewer.open_native')}
                     >
                         {openingExternal ? i18n.t('viewer.opening') : i18n.t('viewer.open_native')}
-                    </button>
+                    </button>}
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-2">
@@ -226,7 +312,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                         </button>
                         <button
                             onClick={(e) => { e.stopPropagation(); void handleSave(); }}
-                            disabled={!dirty || saving || Boolean(readOnlyReason)}
+                            disabled={!dirty || saving || loading || Boolean(error) || Boolean(readOnlyReason)}
                             className="viewer-control !w-auto gap-1.5 px-2.5 disabled:opacity-40"
                             title={i18n.t('common.save')}
                             aria-label={i18n.t('common.save')}
@@ -285,6 +371,8 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                         <div className="flex flex-1 flex-col items-center justify-center gap-1 p-6 text-center text-white">
                             <p className="text-ui font-semibold text-app-danger">{i18n.t('viewer.preview_error')}</p>
                             <p className="text-metadata leading-relaxed text-white/60">{error}</p>
+                            <button onClick={() => setUnlockVault(true)} className="quiet-control px-3 py-2">{i18n.t('settings.unlock_vault')}</button>
+                            <button onClick={() => setReload(value => value + 1)} className="quiet-control px-3 py-2">{i18n.t('common.retry')}</button>
                         </div>
                     ) : readOnlyReason ? (
                         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-white">
@@ -295,6 +383,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                         <textarea
                             ref={textareaRef}
                             value={content}
+                            readOnly={saving}
                             onChange={(e) => setContent(e.target.value)}
                             spellCheck={false}
                             wrap="off"
@@ -313,6 +402,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                 )}
                 <span>{dirty && <span className="me-1">•</span>}{content.length.toLocaleString()}</span>
             </div>
+            {unlockVault && <Suspense fallback={null}><VaultUnlockDialog onClose={() => { setUnlockVault(false); setReload(value => value + 1); }} /></Suspense>}
         </div>
     );
 }

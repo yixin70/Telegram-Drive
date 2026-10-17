@@ -175,7 +175,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const {
     store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
     handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete,
-    handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite
+    handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite, accountId
   } = useTelegramConnection(logoutHandler);
 
   const { data: androidTransferEnvironment } = useQuery({
@@ -1667,8 +1667,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           <LazyFeatureBoundary>
             <LazyTextViewerModal
               file={textFile}
+              ownerId={accountId ?? undefined}
               onClose={() => setTextFile(null)}
               activeFolderId={activeFolderId}
+              onSaved={(messageId) => setTextFile(current => current ? { ...current, id: messageId } : current)}
             />
           </LazyFeatureBoundary>
         </div>
