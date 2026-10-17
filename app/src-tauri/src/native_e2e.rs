@@ -1417,6 +1417,9 @@ impl Driver {
     async fn dispatch(&mut self, request: Value) -> Result<Value, String> {
         let command = text(&request, "command")?.to_owned();
         match command.as_str() {
+            "notes_save" | "notes_read" | "notes_export" | "notes_import"
+            | "notes_prepare_move" | "notes_finish_move" | "notes_alias" | "notes_delete"
+            | "notes_export_file" | "notes_import_file" => self.dispatch_notes(request).await,
             "notifications_start"
             | "notification_language"
             | "notification_tray"
@@ -1605,6 +1608,94 @@ impl Driver {
             | "fail_transfer"
             | "remove_transfer" => self.dispatch_transfers(request).await,
             _ => Err("Unknown native E2E command".into()),
+        }
+    }
+
+    async fn dispatch_notes(&mut self, request: Value) -> Result<Value, String> {
+        let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;
+        match text(&request, "command")? {
+            "notes_save" => serde_json::to_value(crate::notes::save_plain(
+                &account,
+                text(&request, "identity")?,
+                text(&request, "alias")?,
+                text(&request, "text")?.into(),
+                request["expected"]
+                    .as_i64()
+                    .ok_or("Expected revision required")?,
+            )?)
+            .map_err(error),
+            "notes_read" => serde_json::to_value(
+                crate::notes::store::Store::open(&account)?
+                    .read(&account, text(&request, "identity")?)?,
+            )
+            .map_err(error),
+            "notes_export" => {
+                serde_json::to_value(crate::notes::backup::export(&account)?).map_err(error)
+            }
+            "notes_alias" => serde_json::to_value(
+                crate::notes::store::Store::open(&account)?
+                    .by_alias(&account, text(&request, "alias")?)?,
+            )
+            .map_err(error),
+            "notes_prepare_move" => {
+                crate::notes::store::Store::open(&account)?.prepare_move(
+                    &account,
+                    text(&request, "source")?,
+                    text(&request, "target")?,
+                )?;
+                Ok(json!(true))
+            }
+            "notes_finish_move" => {
+                crate::notes::store::Store::open(&account)?.finish_move(
+                    &account,
+                    text(&request, "source")?,
+                    text(&request, "target")?,
+                    text(&request, "identity")?,
+                )?;
+                Ok(json!(true))
+            }
+            "notes_delete" => {
+                crate::notes::store::Store::open(&account)?.delete(
+                    &account,
+                    text(&request, "identity")?,
+                    request["expected"]
+                        .as_i64()
+                        .ok_or("Expected revision required")?,
+                )?;
+                Ok(json!(true))
+            }
+            "notes_export_file" => {
+                crate::notes::backup::write_file(
+                    &account,
+                    &child(&self.root, text(&request, "path")?)?,
+                )?;
+                Ok(json!(true))
+            }
+            "notes_import_file" => {
+                let backup = crate::notes::backup::read_file(
+                    &child(&self.root, text(&request, "path")?)?,
+                    account.owner,
+                )?;
+                serde_json::to_value(crate::notes::backup::import(
+                    &account,
+                    backup,
+                    text(&request, "policy")?,
+                )?)
+                .map_err(error)
+            }
+            "notes_import" => {
+                let backup = crate::notes::backup::Backup::parse(
+                    &serde_json::to_vec(&request["backup"]).map_err(error)?,
+                    account.owner,
+                )?;
+                serde_json::to_value(crate::notes::backup::import(
+                    &account,
+                    backup,
+                    text(&request, "policy")?,
+                )?)
+                .map_err(error)
+            }
+            _ => Err("Unknown notes fixture command".into()),
         }
     }
 

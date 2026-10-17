@@ -184,6 +184,409 @@ impl Drop for Backend {
 }
 
 #[test]
+fn notes_persist_across_processes_and_keep_account_and_revision_boundaries() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    let note = app.ok(json!({"command":"notes_save", "owner":"101",
+        "identity":"document:123", "alias":"9:1", "text":"first\n日本語", "expected":0}));
+    assert_eq!(note["revision"], 1);
+    let id = note["id"].clone();
+    assert!(app
+        .failure(json!({"command":"notes_save", "owner":"101",
+        "identity":"document:123", "alias":"9:1", "text":"lost", "expected":0}))
+        .contains("NOTES_CONFLICT"));
+    app.stop();
+    assert!(fixture.path("notes/notes.db").is_file());
+    let mut app = Backend::start(&fixture.0);
+    let note = app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}));
+    assert_eq!(note["id"], id);
+    assert_eq!(note["payload"]["text"], "first\n日本語");
+    assert!(app
+        .failure(json!({"command":"notes_read", "owner":"202", "identity":"document:123"}))
+        .contains("ACCOUNT_CHANGED"));
+    app.ok(json!({"command":"seed_account", "owner":202}));
+    assert!(app
+        .ok(json!({"command":"notes_read", "owner":"202", "identity":"document:123"}))
+        .is_null());
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}))["id"],
+        id
+    );
+    app.stop();
+}
+
+#[test]
+fn notes_frozen_v1_backup_imports_without_losing_text_or_accepting_unknown_fields() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    let backup: Value =
+        serde_json::from_str(include_str!("fixtures/notes/plain-v1.tdnotes.json")).unwrap();
+    let result =
+        app.ok(json!({"command":"notes_import", "owner":"101", "backup":backup, "policy":"keep"}));
+    assert_eq!(result["added"], 1);
+    let original =
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}));
+    assert_eq!(original, backup["records"][0]);
+    for target in ["envelope", "record", "payload"] {
+        let mut invalid = backup.clone();
+        match target {
+            "envelope" => invalid["path"] = json!("../private"),
+            "record" => invalid["records"][0]["isDecrypted"] = json!(true),
+            _ => invalid["records"][0]["payload"]["isEncrypted"] = json!(false),
+        }
+        assert!(app.failure(json!({"command":"notes_import", "owner":"101", "backup":invalid, "policy":"replace"})).contains("NOTES_INVALID"));
+    }
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"})),
+        original
+    );
+    app.stop();
+}
+
+#[test]
+fn notes_verified_moves_survive_restart_without_binding_copies_or_replacements() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    let original = app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"9:1", "text":"move me", "expected":0}),
+    );
+    app.ok(json!({"command":"notes_prepare_move", "owner":"101", "source":"9:1", "target":"10"}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert!(app
+        .failure(
+            json!({"command":"notes_finish_move", "owner":"101", "source":"9:1",
+        "target":"10:2", "identity":"document:456"})
+        )
+        .contains("NOTES_IDENTITY"));
+    assert!(app
+        .ok(json!({"command":"notes_alias", "owner":"101", "alias":"10:2"}))
+        .is_null());
+    app.ok(json!({"command":"notes_finish_move", "owner":"101", "source":"9:1", "target":"10:2", "identity":"document:123"}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    let moved = app.ok(json!({"command":"notes_alias", "owner":"101", "alias":"10:2"}));
+    assert_eq!(moved["id"], original["id"]);
+    assert_eq!(moved["payload"]["text"], "move me");
+    assert_eq!(moved["revision"], 2);
+    // Recovery may replay an already-committed destination after a restart.
+    app.ok(json!({"command":"notes_finish_move", "owner":"101", "source":"9:1", "target":"10:2", "identity":"document:123"}));
+    assert_eq!(
+        app.ok(json!({"command":"notes_alias", "owner":"101", "alias":"10:2"}))["revision"],
+        2
+    );
+    assert!(app
+        .ok(json!({"command":"notes_alias", "owner":"101", "alias":"10:3"}))
+        .is_null());
+    assert!(app.failure(json!({"command":"notes_delete", "owner":"101", "identity":"document:123", "expected":1})).contains("NOTES_CONFLICT"));
+    app.ok(
+        json!({"command":"notes_delete", "owner":"101", "identity":"document:123", "expected":2}),
+    );
+    assert!(app
+        .ok(json!({"command":"notes_alias", "owner":"101", "alias":"10:2"}))
+        .is_null());
+    app.stop();
+}
+
+#[test]
+fn notes_backup_files_are_complete_bounded_and_do_not_overwrite_existing_files() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"portable\n日本語", "expected":0}),
+    );
+    app.ok(json!({"command":"notes_export_file", "owner":"101", "path":"backup.tdnotes.json"}));
+    let bytes = fixture.read("backup.tdnotes.json");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap()["records"][0]["payload"]["text"],
+        "portable\n日本語"
+    );
+    app.failure(
+        json!({"command":"notes_export_file", "owner":"101", "path":"backup.tdnotes.json"}),
+    );
+    assert_eq!(fixture.read("backup.tdnotes.json"), bytes);
+    assert_eq!(app.ok(json!({"command":"notes_import_file", "owner":"101", "path":"backup.tdnotes.json", "policy":"keep"}))["unchanged"], 1);
+    fixture.write("broken.tdnotes.json", b"{incomplete");
+    assert!(app.failure(json!({"command":"notes_import_file", "owner":"101", "path":"broken.tdnotes.json", "policy":"replace"})).contains("NOTES_INVALID"));
+    let mut wrong_owner: Value = serde_json::from_slice(&bytes).unwrap();
+    wrong_owner["owner"] = json!("202");
+    fixture.write(
+        "wrong-owner.tdnotes.json",
+        &serde_json::to_vec(&wrong_owner).unwrap(),
+    );
+    assert!(app.failure(json!({"command":"notes_import_file", "owner":"101", "path":"wrong-owner.tdnotes.json", "policy":"replace"})).contains("ACCOUNT_CHANGED"));
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}))
+            ["revision"],
+        1
+    );
+    app.stop();
+    assert!(!fixture.0.read_dir().unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".tdnotes-")));
+}
+
+#[test]
+fn notes_import_rolls_back_alias_collisions_and_repeated_conflicts() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    let first = app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"9:1", "text":"first", "expected":0}),
+    );
+    let second = app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:456",
+        "alias":"9:2", "text":"second", "expected":0}),
+    );
+    let original = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    let mut invalid = original.clone();
+    let records = invalid["records"].as_array_mut().unwrap();
+    // First row would modify existing content, second collides with a row not in the import.
+    records.clear();
+    let mut changed = first.clone();
+    changed["payload"]["text"] = json!("changed");
+    let mut collision = second;
+    collision["id"] = json!("40c3f955-9d62-4d4d-bb21-f2725d78fb4c");
+    collision["identity"] = json!("document:789");
+    collision["aliases"] = json!(["9:2"]);
+    records.extend([changed.clone(), collision]);
+    app.failure(
+        json!({"command":"notes_import", "owner":"101", "backup":invalid, "policy":"replace"}),
+    );
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"})),
+        first
+    );
+    assert!(app
+        .ok(json!({"command":"notes_read", "owner":"101", "identity":"document:789"}))
+        .is_null());
+    let mut replacement = original.clone();
+    replacement["records"] = json!([changed]);
+    assert_eq!(
+        app.ok(
+            json!({"command":"notes_import", "owner":"101", "backup":replacement, "policy":"both"})
+        )["added"],
+        1
+    );
+    assert_eq!(
+        app.ok(
+            json!({"command":"notes_import", "owner":"101", "backup":replacement, "policy":"both"})
+        )["unchanged"],
+        1
+    );
+    let exported = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    assert_eq!(exported["records"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        app.ok(
+            json!({"command":"notes_import", "owner":"101", "backup":exported, "policy":"keep"})
+        )["unchanged"],
+        3
+    );
+    app.stop();
+    assert!(fixture.path("notes/backups").read_dir().unwrap().count() > 0);
+}
+
+#[test]
+fn notes_backup_import_is_atomic_bounded_and_idempotent() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"original", "expected":0}),
+    );
+    let backup = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    assert_eq!(backup["format"], "telegram-drive-notes");
+    assert_eq!(backup["version"], 1);
+    assert_eq!(backup["records"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        app.ok(
+            json!({"command":"notes_import", "owner":"101", "backup":backup,
+        "policy":"keep"})
+        )["unchanged"],
+        1
+    );
+    let mut invalid = backup.clone();
+    invalid["records"][0]["payload"]["text"] = json!("x".repeat(65_537));
+    assert!(app
+        .failure(
+            json!({"command":"notes_import", "owner":"101", "backup":invalid,
+        "policy":"replace"})
+        )
+        .contains("NOTES_LIMIT"));
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}))
+            ["payload"]["text"],
+        "original"
+    );
+    let mut future = backup.clone();
+    future["version"] = json!(2);
+    assert!(app
+        .failure(
+            json!({"command":"notes_import", "owner":"101", "backup":future,
+        "policy":"replace"})
+        )
+        .contains("NOTES_VERSION"));
+    app.stop();
+    let db = sqlite::open(fixture.path("notes/notes.db")).unwrap();
+    db.execute("PRAGMA user_version=999").unwrap();
+    drop(db);
+    let bytes = fixture.read("notes/notes.db");
+    let mut app = Backend::start(&fixture.0);
+    assert!(app
+        .failure(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}))
+        .contains("NOTES_VERSION"));
+    app.stop();
+    assert_eq!(fixture.read("notes/notes.db"), bytes);
+}
+
+#[test]
+fn notes_reimport_restores_deleted_content_and_does_not_repeat_conflict_copies() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"backup text", "expected":0}),
+    );
+    let backup = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    app.ok(json!({"command":"notes_import", "owner":"101", "backup":backup, "policy":"keep"}));
+    app.ok(
+        json!({"command":"notes_delete", "owner":"101", "identity":"document:123", "expected":1}),
+    );
+    assert_eq!(
+        app.ok(json!({"command":"notes_import", "owner":"101", "backup":backup, "policy":"keep"}))
+            ["added"],
+        1
+    );
+    app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"current text", "expected":1}),
+    );
+    assert_eq!(
+        app.ok(json!({"command":"notes_import", "owner":"101", "backup":backup, "policy":"both"}))
+            ["added"],
+        1
+    );
+    // A separate edit must not make the same backup create a second alternate.
+    app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:456",
+        "alias":"saved:2", "text":"unrelated", "expected":0}),
+    );
+    assert_eq!(
+        app.ok(json!({"command":"notes_import", "owner":"101", "backup":backup, "policy":"both"}))
+            ["unchanged"],
+        1
+    );
+    let exported = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    assert_eq!(exported["records"].as_array().unwrap().len(), 3);
+    app.stop();
+}
+
+#[test]
+fn notes_invalid_aliases_and_utf8_limits_leave_committed_content_untouched() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    let first = app.ok(
+        json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"safe", "expected":0}),
+    );
+    for alias in [
+        "saved:0", "saved:01", "+9:1", "09:1", "0:1", "9:+1", "9:1:2", "../:1",
+    ] {
+        assert!(
+            app.failure(
+                json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+            "alias":alias, "text":"invalid", "expected":1})
+            )
+            .contains("NOTES_INVALID"),
+            "alias={alias}"
+        );
+    }
+    assert!(app
+        .failure(
+            json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"日".repeat(21_846), "expected":1})
+        )
+        .contains("NOTES_LIMIT"));
+    assert_eq!(
+        app.ok(json!({"command":"notes_read", "owner":"101", "identity":"document:123"})),
+        first
+    );
+    app.stop();
+}
+
+#[test]
+fn notes_refuse_unrecognized_unversioned_storage_and_storage_failures_without_reset() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.stop();
+    std::fs::create_dir(fixture.path("notes")).unwrap();
+    let db = sqlite::open(fixture.path("notes/notes.db")).unwrap();
+    db.execute("CREATE TABLE legacy_user_content(text TEXT); INSERT INTO legacy_user_content VALUES('preserve');").unwrap();
+    drop(db);
+    let before = fixture.read("notes/notes.db");
+    let mut app = Backend::start(&fixture.0);
+    assert!(app
+        .failure(json!({"command":"notes_read", "owner":"101", "identity":"document:123"}))
+        .contains("NOTES_VERSION"));
+    app.stop();
+    assert_eq!(fixture.read("notes/notes.db"), before);
+
+    let blocked = Fixture::new();
+    let mut app = Backend::start(&blocked.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    blocked.write("notes", b"not a folder");
+    assert!(app
+        .failure(
+            json!({"command":"notes_save", "owner":"101", "identity":"document:123",
+        "alias":"saved:1", "text":"not saved", "expected":0})
+        )
+        .contains("NOTES_STORAGE"));
+    app.stop();
+    assert_eq!(blocked.read("notes"), b"not a folder");
+}
+
+#[test]
+fn notes_first_use_in_parallel_processes_preserves_every_committed_note() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account", "owner":101}));
+    app.stop();
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        for index in 1..=4 {
+            let root = &fixture.0;
+            let barrier = &barrier;
+            scope.spawn(move || {
+                let mut app = Backend::start(root);
+                barrier.wait();
+                app.ok(json!({"command":"notes_save", "owner":"101",
+                    "identity":format!("document:{index}"), "alias":format!("saved:{index}"),
+                    "text":format!("writer {index}"), "expected":0}));
+                app.stop();
+            });
+        }
+    });
+    let mut app = Backend::start(&fixture.0);
+    let backup = app.ok(json!({"command":"notes_export", "owner":"101"}));
+    assert_eq!(backup["records"].as_array().unwrap().len(), 4);
+    app.stop();
+}
+
+#[test]
 #[cfg(windows)]
 fn native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack() {
     let fixture = Fixture::new();

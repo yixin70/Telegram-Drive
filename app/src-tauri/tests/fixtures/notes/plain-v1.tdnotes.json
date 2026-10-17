@@ -1,0 +1,21 @@
+{
+  "format": "telegram-drive-notes",
+  "version": 1,
+  "owner": "101",
+  "exportedAt": 1792249800000,
+  "records": [
+    {
+      "id": "845de804-97ad-40fe-94af-99010d79588c",
+      "owner": "101",
+      "identity": "document:123",
+      "revision": 1,
+      "createdAt": 1792249800000,
+      "updatedAt": 1792249800000,
+      "aliases": ["saved:1"],
+      "payload": {
+        "kind": "plain",
+        "text": "Version one\n日本語 — stable backup"
+      }
+    }
+  ]
+}

@@ -109,6 +109,8 @@ pub mod jni_cache;
 mod local_cors;
 pub(crate) mod local_search;
 pub mod mp4_utils;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod notes;
 pub mod server;
 mod server_lifecycle;
 pub mod share_routes;
