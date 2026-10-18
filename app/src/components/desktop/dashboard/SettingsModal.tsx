@@ -33,14 +33,6 @@ interface SettingsModalProps {
     initialTab?: SettingsTab;
 }
 
-interface ApiSettings {
-    enabled: boolean;
-    port: number;
-    key_set: boolean;
-    running: boolean;
-    last_error: string | null;
-}
-
 interface WebDavSettings {
     supported: boolean;
     enabled: boolean;
@@ -81,7 +73,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
     const [clearingVariant, setClearingVariant] = useState<string | null>(null); // file_key:quality being cleared
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
     const [settingsSearch, setSettingsSearch] = useState('');
-    const [showGeneralAdvanced, setShowGeneralAdvanced] = useState(false);
     const [accessTransparency, setAccessTransparency] = useState<LocalAccessService | null>(null);
     const modalRef = useRef<HTMLDivElement>(null);
     useModalFocus(modalRef, onClose, isOpen, !!accessTransparency);
@@ -203,13 +194,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
         setTimeout(() => { if (isCurrent()) setCopiedId(null); }, 2000);
     };
 
-    // API settings state
-    const [apiSettings, setApiSettings] = useState<ApiSettings>({ enabled: false, port: 8550, key_set: false, running: false, last_error: null });
-    const [apiPort, setApiPort] = useState('8550');
-    const [apiLoading, setApiLoading] = useState(false);
-    const [generatedKey, setGeneratedKey] = useState<string | null>(null);
-    const [keyCopied, setKeyCopied] = useState(false);
-
     // WebDAV settings state
     const [webDavSettings, setWebDavSettings] = useState<WebDavSettings>({
         supported: true,
@@ -226,16 +210,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
     const [generatedWebDavUrl, setGeneratedWebDavUrl] = useState<string | null>(null);
     const [webDavUrlCopied, setWebDavUrlCopied] = useState(false);
 
-    const fetchApiSettings = useCallback(async () => {
-        try {
-            const apiStatus = await invoke<ApiSettings>('cmd_get_api_settings');
-            setApiSettings(apiStatus);
-            setApiPort(apiStatus.port.toString());
-        } catch {
-            // API settings not available
-        }
-    }, []);
-
     const fetchWebDavSettings = useCallback(async (syncPort = true) => {
         try {
             const webDavStatus = await invoke<WebDavSettings>('cmd_get_webdav_settings');
@@ -246,17 +220,14 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
         }
     }, []);
 
-    // Load API settings when modal opens
+    // Load WebDAV settings when the modal opens
     useEffect(() => {
         if (isOpen) {
-            fetchApiSettings();
             fetchWebDavSettings();
-            setGeneratedKey(null);
-            setKeyCopied(false);
             setGeneratedWebDavUrl(null);
             setWebDavUrlCopied(false);
         }
-    }, [isOpen, fetchApiSettings, fetchWebDavSettings]);
+    }, [isOpen, fetchWebDavSettings]);
 
     // Fetch transcode cache info
     const fetchTranscodeCache = useCallback(async (refresh = false) => {
@@ -319,13 +290,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
         const interval = window.setInterval(() => void fetchTranscodeCache(false), 1_000);
         return () => window.clearInterval(interval);
     }, [activeTab, fetchTranscodeCache, isOpen, transcodeCache?.scan_in_progress]);
-
-    // Poll API status while modal is open and API is enabled
-    useEffect(() => {
-        if (!isOpen || !apiSettings.enabled) return;
-        const interval = setInterval(fetchApiSettings, 3000);
-        return () => clearInterval(interval);
-    }, [isOpen, apiSettings.enabled, fetchApiSettings]);
 
     // Poll WebDAV runtime state while its tab is visible.
     useEffect(() => {
@@ -412,100 +376,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
         };
         detect();
     }, [isOpen, activeTab]);
-
-    const handleApiToggle = async () => {
-        if (!apiSettings.enabled && !settings.restPermissionExplained) {
-            const understood = await confirm({
-                title: 'Before enabling REST access',
-                message: 'The REST server opens a local automation endpoint on the port shown below. Anyone who can reach that address still needs the generated API key. Keep the key private, bind only to networks you trust, and disable the server when it is no longer needed.',
-                confirmText: 'I understand — enable',
-                variant: 'info',
-            });
-            if (!understood) return;
-            updateSetting('restPermissionExplained', true);
-        }
-        setApiLoading(true);
-        try {
-            const port = parseInt(apiPort, 10);
-            if (isNaN(port) || port < 1024 || port > 65535) {
-                toast.error(t('settings.port_range_error'));
-                setApiLoading(false);
-                return;
-            }
-            const updatedSettings = await invoke<ApiSettings>('cmd_update_api_settings', {
-                enabled: !apiSettings.enabled,
-                port,
-            });
-            setApiSettings(updatedSettings);
-            if (updatedSettings.last_error) {
-                toast.error(updatedSettings.last_error);
-            } else {
-                toast.success(updatedSettings.enabled ? t('settings.api_server_started') : t('settings.api_server_stopped'));
-            }
-        } catch (e) {
-            toast.error(t('settings.api_update_failed', { error: e }));
-        } finally {
-            setApiLoading(false);
-        }
-    };
-
-    const handlePortApply = async () => {
-        const port = parseInt(apiPort, 10);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-            toast.error(t('settings.port_range_error'));
-            return;
-        }
-        if (port === apiSettings.port) return;
-        setApiLoading(true);
-        try {
-            const updatedSettings = await invoke<ApiSettings>('cmd_update_api_settings', {
-                enabled: apiSettings.enabled,
-                port,
-            });
-            setApiSettings(updatedSettings);
-            if (updatedSettings.last_error) {
-                toast.error(updatedSettings.last_error);
-            } else {
-                toast.success(t('settings.api_port_updated', { port }));
-            }
-        } catch (e) {
-            toast.error(t('settings.api_port_update_failed', { error: e }));
-        } finally {
-            setApiLoading(false);
-        }
-    };
-
-    const handleGenerateKey = async () => {
-        const ok = await confirm({
-            title: t('settings.generate_api_key_title'),
-            message: apiSettings.key_set
-                ? t('settings.regenerate_api_key_desc')
-                : t('settings.generate_api_key_desc'),
-            confirmText: apiSettings.key_set ? t('settings.regenerate') : t('settings.generate'),
-            variant: apiSettings.key_set ? 'danger' : 'info',
-        });
-        if (!ok) return;
-        try {
-            const key = await invoke<string>('cmd_regenerate_api_key');
-            setGeneratedKey(key);
-            setKeyCopied(false);
-            setApiSettings(prev => ({ ...prev, key_set: true }));
-            toast.success(t('settings.api_key_generated'));
-        } catch (e) {
-            toast.error(t('settings.api_key_generate_failed', { error: e }));
-        }
-    };
-
-    const handleCopyKey = async () => {
-        if (!generatedKey) return;
-        try {
-            await navigator.clipboard.writeText(generatedKey);
-            setKeyCopied(true);
-            setTimeout(() => setKeyCopied(false), 2000);
-        } catch {
-            toast.error(t('settings.copy_clipboard_failed'));
-        }
-    };
 
     const parseWebDavPort = () => {
         const port = Number.parseInt(webDavPort, 10);
@@ -706,7 +576,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
                                 [t('ui_copy.nav_essentials'), [['general', Globe, 'General transfers language updates'], ['themes', Palette, 'Appearance colors themes']] as const],
                                 [t('ui_copy.nav_security'), [['privacy', Bug, 'Privacy telemetry crash reports consent'], ['encryption', Shield, 'Encryption vault security auto lock']] as const],
                                 [t('ui_copy.nav_connections'), [['sync', FolderSync, 'Folder sync local directories Telegram channels'], ['sharing', Link, 'Sharing links local server']] as const],
-                                [t('settings.tab_advanced'), [['advanced', Gauge, 'REST API proxy VPN WebDAV network integration Finder token port']] as const],
+                                [t('settings.tab_advanced'), [['advanced', Gauge, 'WebDAV proxy VPN network integration Finder token port']] as const],
                                 [t('ui_copy.nav_support'), [['about', Info, 'About diagnostics version updates']] as const],
                             ] as const).map(([group, items]) => {
                                 const visibleItems = items.filter(([key, , keywords]) => `${key} ${keywords} ${tabLabel(key)}`.toLowerCase().includes(settingsSearch.trim().toLowerCase()));
@@ -823,110 +693,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
                                 </div>
                             </section>
 
-                            {!showGeneralAdvanced && (
-                                <button type="button" onClick={() => setActiveTab('advanced')} className="quiet-surface flex w-full items-center justify-between p-4 text-start hover:border-app-accent/30 hover:bg-app-hover"><span><strong className="block text-sm text-app-text">{i18n.t('ui_copy.advanced_settings')}</strong><span className="mt-1 block text-xs text-app-text-secondary">REST API, WebDAV, proxy, VPN, and network tuning</span></span><Gauge className="h-5 w-5 text-app-accent" /></button>
-                            )}
-
-                            {/* REST API Section */}
-                            <section className={`${showGeneralAdvanced ? '' : 'hidden'} space-y-3`}>
-                                <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider flex items-center gap-2">
-                                    <Globe className="w-3.5 h-3.5" />
-                                    {t('settings.rest_api')}
-                                </h3>
-
-                                {/* Enable Toggle */}
-                                <div className="flex items-center justify-between p-3 rounded-lg bg-telegram-hover/50">
-                                    <div className="flex items-center gap-2">
-                                        <div className={`w-2 h-2 rounded-full ${apiSettings.running ? 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.5)]' : 'bg-gray-500'}`} />
-                                        <div>
-                                            <p className="text-sm text-telegram-text font-medium">{t('settings.enable_api_server')}</p>
-                                            <p className="text-xs text-telegram-subtext">
-                                                {apiSettings.running ? t('settings.api_running', { port: apiSettings.port }) : t('settings.api_stopped')}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button" role="switch" aria-checked={apiSettings.enabled} aria-label={t('settings.enable_api_server')}
-                                        onClick={handleApiToggle}
-                                        disabled={apiLoading}
-                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${apiSettings.enabled ? 'bg-telegram-primary' : 'bg-telegram-border'} disabled:opacity-50`}
-                                    >
-                                        <span className={`absolute top-0.5 start-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${apiSettings.enabled ? 'translate-x-5 rtl:-translate-x-5' : 'translate-x-0'}`} />
-                                    </button>
-                                </div>
-
-                                {apiSettings.last_error && (
-                                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                                        <p className="text-xs font-medium text-red-300">{t('settings.webdav_last_error')}</p>
-                                        <p className="mt-1 break-words font-mono text-[11px] text-red-300/80">{apiSettings.last_error}</p>
-                                    </div>
-                                )}
-
-                                {/* Port */}
-                                <div className="flex items-center justify-between p-3 rounded-lg bg-telegram-hover/50">
-                                    <div>
-                                        <p className="text-sm text-telegram-text font-medium">{t('common.port')}</p>
-                                        <p className="text-xs text-telegram-subtext">1024 - 65535</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="number"
-                                            min="1024"
-                                            max="65535"
-                                            aria-label={t('common.port')}
-                                            value={apiPort}
-                                            onChange={e => setApiPort(e.target.value)}
-                                            onBlur={handlePortApply}
-                                            onKeyDown={e => { if (e.key === 'Enter') handlePortApply(); }}
-                                            className="w-20 bg-telegram-bg border border-telegram-border rounded-md px-2 py-1 text-sm text-telegram-text text-center focus:outline-none focus:border-telegram-primary/50 transition"
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* API Key */}
-                                <div className="p-3 rounded-lg bg-telegram-hover/50 space-y-2.5">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <Key className="w-4 h-4 text-telegram-subtext" />
-                                            <div>
-                                                <p className="text-sm text-telegram-text font-medium">{t('settings.api_key')}</p>
-                                                <p className="text-xs text-telegram-subtext">
-                                                    {apiSettings.key_set ? t('settings.api_key_configured') : t('settings.api_key_unset')}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={handleGenerateKey}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-telegram-primary/10 text-telegram-primary hover:bg-telegram-primary/20 transition"
-                                        >
-                                            <RefreshCw className="w-3 h-3" />
-                                            {apiSettings.key_set ? t('settings.regenerate') : t('settings.generate')}
-                                        </button>
-                                    </div>
-
-                                    {/* One-time key reveal */}
-                                    {generatedKey && (
-                                        <div className="mt-2 p-2.5 bg-telegram-bg rounded-lg border border-yellow-500/20">
-                                            <p className="text-[10px] text-yellow-400/80 uppercase tracking-wider font-semibold mb-1.5">
-                                                {t('settings.api_copy_alert')}
-                                            </p>
-                                            <div className="flex items-center gap-2">
-                                                <code className="flex-1 text-xs text-telegram-text font-mono bg-telegram-hover rounded px-2 py-1.5 overflow-x-auto select-all">
-                                                    {generatedKey}
-                                                </code>
-                                                <button
-                                                    onClick={handleCopyKey}
-                                                    className="p-1.5 rounded-md hover:bg-telegram-hover text-telegram-subtext hover:text-telegram-text transition flex-shrink-0"
-                                                    title="Copy to clipboard"
-                                                >
-                                                    {keyCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                                <button type="button" onClick={() => setAccessTransparency('rest')} className="quiet-control flex w-full items-center justify-center gap-2 border border-app-border-subtle px-3 py-2 text-xs font-medium text-app-accent"><Info className="h-3.5 w-3.5" aria-hidden="true" />{t('access_copy.rest_open')}</button>
-                            </section>
+                            <button type="button" onClick={() => setActiveTab('advanced')} className="quiet-surface flex w-full items-center justify-between p-4 text-start hover:border-app-accent/30 hover:bg-app-hover"><span><strong className="block text-sm text-app-text">{i18n.t('ui_copy.advanced_settings')}</strong><span className="mt-1 block text-xs text-app-text-secondary">WebDAV, proxy, VPN, and network tuning</span></span><Gauge className="h-5 w-5 text-app-accent" /></button>
 
                             {/* Storage Section */}
                             <section className="space-y-3">
@@ -1267,7 +1034,6 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
 
                                 {activeTab === 'advanced' && (
                                     <AdvancedSettingsTab
-                                        onOpenApi={() => { setShowGeneralAdvanced(true); setActiveTab('general'); }}
                                         onOpenWebDav={() => setActiveTab('webdav')}
                                         onOpenProxy={() => setActiveTab('proxy')}
                                         onOpenVpn={() => setActiveTab('vpn')}

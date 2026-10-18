@@ -18,7 +18,6 @@ export const DEFAULT_SETTINGS: Settings = {
   vaultRecoveryDrillCompleted: false,
   vaultRecoveryDrillVaultId: '',
   webdavPermissionExplained: false,
-  restPermissionExplained: false,
   downloadWebdavTipSeen: false,
   proxyEnabled: false,
   proxyType: 'socks5',

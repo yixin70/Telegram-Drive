@@ -181,7 +181,7 @@ test('bundle CLI records route costs and refuses missing or exceeded required ro
   write('src/i18n/locales/en.json', '{}');
   const emptyKeysId = crypto.createHash('sha256').update('[]').digest('hex');
   write('dist/assets/translation-keys-fixture.json', JSON.stringify({format: 'td-keys-v1', id: emptyKeysId, keys: []}));
-  write('dist/assets/en-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'en', id: emptyKeysId, values: []}));
+  write('dist/assets/en-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'en', id: emptyKeysId, values: []}));
   write('dist/assets/main.js', '/* entry */'.padEnd(30, ' '));
   const manifest = { 'src/main.tsx': { isEntry: true, file: 'assets/main.js' } };
   for (const [key, name, bytes] of [[dashboard, 'dashboard', 200], [settings, 'settings', 80], [media, 'media', 120], [pdf, 'pdf', 160]]) {
@@ -206,16 +206,16 @@ test('bundle CLI records route costs and refuses missing or exceeded required ro
   const keys = ['common.greeting'];
   const keyId = crypto.createHash('sha256').update(JSON.stringify(keys)).digest('hex');
   write('dist/assets/translation-keys-fixture.json', JSON.stringify({format: 'td-keys-v1', id: keyId, keys}));
-  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'es', id: keyId, values: ['Hola']}));
-  write('dist/assets/en-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'en', id: keyId, values: [null]}));
+  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'es', id: keyId, values: ['Hola']}));
+  write('dist/assets/en-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'en', id: keyId, values: [null]}));
   success(runBudget());
   const packedReport = JSON.parse(fs.readFileSync(path.join(app, 'dist/bundle-report.json'), 'utf8'));
   assert.equal(packedReport.summary.totalLocaleDataBytes, ['translation-keys-fixture.json', 'en-fixture.json', 'es-fixture.json'].reduce((sum, name) => sum + fs.statSync(path.join(app, 'dist/assets', name)).size, 0));
-  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'es', id: keyId, values: ['WRONG']}));
+  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'es', id: keyId, values: ['WRONG']}));
   const corrupt = runBudget();
   assert.notEqual(corrupt.status, 0, 'changed translations must not pass a packed-artifact check');
   assert.match(corrupt.stderr, /canonical.*es|es.*canonical/);
-  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'es', id: keyId, values: ['Hola']}));
+  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'es', id: keyId, values: ['Hola']}));
   fs.rmSync(path.join(app, 'dist/assets/translation-keys-fixture.json'));
   assert.notEqual(runBudget().status, 0, 'removing the counted key table must fail');
   write('dist/assets/translation-keys-fixture.json', JSON.stringify({format: 'td-keys-v1', id: keyId, keys}));
@@ -225,7 +225,7 @@ test('bundle CLI records route costs and refuses missing or exceeded required ro
   const unpacked = runBudget();
   assert.notEqual(unpacked.status, 0, 'unpacked production languages are incompatible with the production loader');
   assert.match(unpacked.stderr, /Packed language catalogs require/);
-  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v1', language: 'es', id: keyId, values: ['Hola']}));
+  write('dist/assets/es-fixture.json', JSON.stringify({format: 'td-locale-v2', language: 'es', id: keyId, values: ['Hola']}));
   write('dist/assets/translation-keys-fixture.json', JSON.stringify({format: 'td-keys-v1', id: keyId, keys}));
   success(runBudget());
   delete budget.featureChunkBudgets[media];
@@ -273,13 +273,13 @@ test('the locale validation CLI rejects missing plural forms and altered extra-f
   };
   success(check());
   for(const [replacement,diagnostic]of [['{{action}} {{wrong}}','variable_mismatch'],['Delete {{name}}','copied_english_regression']]) {
-    const key=diagnostic==='variable_mismatch'?'action_name':'action_prose',prior=catalogs.ar.common[key];
-    catalogs.ar.common[key]=replacement;write('src/i18n/locales/ar.json',catalogs.ar);const result=check();
+    const key=diagnostic==='variable_mismatch'?'action_name':'action_prose',prior=catalogs.es.common[key];
+    catalogs.es.common[key]=replacement;write('src/i18n/locales/es.json',catalogs.es);const result=check();
     assert.notEqual(result.status,0);assert.match(result.stderr,new RegExp(diagnostic));
-    catalogs.ar.common[key]=prior;write('src/i18n/locales/ar.json',catalogs.ar);
+    catalogs.es.common[key]=prior;write('src/i18n/locales/es.json',catalogs.es);
   }
   const outcomes = [];
-  for (const [locale, key, replacement, diagnostic] of [['ar', 'items_two', null], ['es', 'items_other', null], ['ar', 'items_few', 'ar {{count}} {{unexpected}}'], ['ar', 'items_many', catalogs.en.common.items_other, 'copied_english_regression']]) {
+  for (const [locale, key, replacement, diagnostic] of [['es', 'items_one', null], ['es', 'items_other', null], ['es', 'items_many', 'es {{count}} {{unexpected}}'], ['es', 'items_many', catalogs.en.common.items_other, 'copied_english_regression']]) {
     const prior = catalogs[locale].common[key];
     if (replacement === null) delete catalogs[locale].common[key];else catalogs[locale].common[key] = replacement;
     write('src/i18n/locales/' + locale + '.json', catalogs[locale]);
@@ -287,10 +287,10 @@ test('the locale validation CLI rejects missing plural forms and altered extra-f
     catalogs[locale].common[key] = prior;write('src/i18n/locales/' + locale + '.json', catalogs[locale]);
   }
   assert.deepEqual(outcomes.map(({locale, key, rejected, diagnostic}) => ({locale, key, rejected, diagnostic})), [
-    {locale: 'ar', key: 'items_two', rejected: true, diagnostic: true},
+    {locale: 'es', key: 'items_one', rejected: true, diagnostic: true},
     {locale: 'es', key: 'items_other', rejected: true, diagnostic: true},
-    {locale: 'ar', key: 'items_few', rejected: true, diagnostic: true},
-    {locale: 'ar', key: 'items_many', rejected: true, diagnostic: true},
+    {locale: 'es', key: 'items_many', rejected: true, diagnostic: true},
+    {locale: 'es', key: 'items_many', rejected: true, diagnostic: true},
   ]);
   for (const [locale, catalog] of Object.entries(catalogs)) {
     catalog.settings = {sync: {title: locale === 'en' ? 'Folder Sync' : locale + ' folder sync'}};
@@ -298,13 +298,13 @@ test('the locale validation CLI rejects missing plural forms and altered extra-f
   }
   write('src/i18n/invariant-allowlist.json', {keys: ['settings.sync.title'], tokens: []});
   success(check());
-  catalogs.ar.settings.sync.title = 'Folder Sync';
-  write('src/i18n/locales/ar.json', catalogs.ar);
+  catalogs.es.settings.sync.title = 'Folder Sync';
+  write('src/i18n/locales/es.json', catalogs.es);
   const copiedExemption = check();
   assert.notEqual(copiedExemption.status, 0);
   assert.match(copiedExemption.stderr, /copied_english_regression/);
-  catalogs.ar.settings.sync.title = 'ar folder sync';
-  write('src/i18n/locales/ar.json', catalogs.ar);
+  catalogs.es.settings.sync.title = 'es folder sync';
+  write('src/i18n/locales/es.json', catalogs.es);
   success(check());
 });
 
@@ -491,7 +491,10 @@ test('RC packaging uses the plain application version for the exact upstream Deb
   const version = JSON.parse(policy.stdout).applicationVersion;
   const deb = path.join(directory, `Telegram.Drive_${version}_amd64.deb`); fs.writeFileSync(deb, 'fixture binary package');
   const rendered = path.join(directory, 'recipe');
-  const result = spawnSync('bash', [path.join(scripts, 'render-arch-pkgbuild.sh'), deb, version, rendered], {encoding:'utf8',timeout:15000}); success(result);
+  const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git/bin/bash.exe') : 'bash';
+  const shellPath = value => process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  const result = spawnSync(bash, [shellPath(path.join(scripts, 'render-arch-pkgbuild.sh')), shellPath(deb), version, shellPath(rendered)], {encoding:'utf8',timeout:15000});
+  assert.ifError(result.error); success(result);
   const recipe = fs.readFileSync(path.join(rendered, 'PKGBUILD'), 'utf8');
   assert.match(recipe, /^pkgver=4\.0\.0$/m); assert.match(recipe, /Telegram\.Drive_4\.0\.0_amd64\.deb/);
   assert.doesNotMatch(recipe, /rc\.1/);

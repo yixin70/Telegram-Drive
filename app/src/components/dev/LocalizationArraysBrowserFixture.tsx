@@ -51,7 +51,7 @@ export function LocalizationArraysBrowserFixture() {
         onToggleSelection={() => undefined} onSelectAll={() => undefined} onClearSelection={() => undefined} onBulkDelete={() => undefined} onBulkDownload={() => undefined} onBulkMove={() => undefined}
         onKeepOffline={value => setLastAction(`keep:${value.id}`)} onRemoveOffline={value => setLastAction(`remove:${value.id}`)} onShare={value => setLastAction(`share:${value.id}`)} onCopyTelegramLink={value => setLastAction(`copy:${value.id}`)} /></div>
         : <section data-copy-view>{view === 'privacy' ? <PrivacySettingsTab crashReportingEnabled={settings.crashReportingEnabled} onCrashReportingChange={() => updateSetting('crashReportingEnabled', !settings.crashReportingEnabled)} settings={settings} onSettingsChange={updateSettings} onSettingsSyncEnabledChange={enabled => updateSetting('telegramSettingsSyncEnabled', enabled)} />
-          : view === 'themes' ? <ThemesTab /> : <AdvancedSettingsTab onOpenApi={() => setLastAction('api')} onOpenWebDav={() => setLastAction('webdav')} onOpenProxy={() => setLastAction('proxy')} onOpenVpn={() => setLastAction('vpn')} />}</section>}
+          : view === 'themes' ? <ThemesTab /> : <AdvancedSettingsTab onOpenWebDav={() => setLastAction('webdav')} onOpenProxy={() => setLastAction('proxy')} onOpenVpn={() => setLastAction('vpn')} />}</section>}
       <output data-last-action>{lastAction}</output>
     </main>
   );

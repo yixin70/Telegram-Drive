@@ -22,7 +22,7 @@ Crash reporting is disabled by default and requires explicit consent. A report c
 
 ## Local sharing servers
 
-WebDAV, REST, and password-protected local links are disabled until enabled by the user. They listen on the addresses shown in Settings and use capability tokens, API keys, or passwords. Disabling a server or regenerating its credential revokes that access. Guest or anonymous WebDAV connections receive no token-scoped file access.
+WebDAV and password-protected local links are disabled until enabled by the user. They listen on the addresses shown in Settings and use capability tokens or passwords. Disabling a server or regenerating its credential revokes that access. Guest or anonymous WebDAV connections receive no token-scoped file access.
 
 ## User control
 

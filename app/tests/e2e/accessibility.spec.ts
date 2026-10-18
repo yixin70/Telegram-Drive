@@ -33,7 +33,7 @@ test('every Settings tab and expanded network controls pass axe',async ({page})=
     await page.waitForTimeout(180); // Outgoing tab animation must finish before inspecting the active view.
     findings.push({tab,violations:await audit(page)});
   }
-  for(const tab of ['WebDAV','Proxy','VPN & network','REST API']) {
+  for(const tab of ['WebDAV','Proxy','VPN & network']) {
     await dialog.getByRole('button',{name:'Advanced',exact:true}).click();
     await dialog.getByRole('button',{name:new RegExp(`^${tab}`)}).click();
     await page.waitForTimeout(180);
@@ -200,10 +200,11 @@ test('TV Escape exits native field editing and arrows can leave the field withou
   await number.press('Escape');await number.press('Enter');await number.press('ArrowUp');await expect(number).toHaveValue('3');
   await number.press('Escape');await number.press('ArrowRight');
   const select=page.getByRole('combobox',{name:'Native choice',exact:true});await expect(select).toBeFocused();
-  // Type-ahead has already selected the value. Enter can open a native picker
-  // on Linux Chromium, which consumes Escape before the field handler sees it.
-  await select.press('ArrowDown');await select.press('s');await expect(select).toHaveValue('b');
-  await select.press('Escape');await select.press('ArrowDown');
+  // Type-ahead edits the native value without opening an OS picker (ArrowDown
+  // opens one on Windows, where its Escape never reaches the field handler).
+  // Navigate left to the adjacent number, independent of native control heights.
+  await select.press('s');await expect(select).toHaveValue('b');
+  await select.press('Escape');await select.press('ArrowLeft');
   await expect(number).toBeFocused();
   await number.press('Escape');await number.press('Tab');await page.keyboard.press('Shift+Tab');
   await expect(number).toBeFocused();

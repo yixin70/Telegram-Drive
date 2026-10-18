@@ -44,13 +44,13 @@ The desktop sidebar displays an amber Folder Sync status when conflicts exist. O
 
 No conflict is resolved automatically.
 
-## Using WebDAV or the REST API at the same time
+## Using WebDAV at the same time
 
-WebDAV, the REST API, and Folder Sync all operate against the same Telegram channels. Their changes appear in the Remote Tree during the next reconciliation. Keep these rules in mind:
+WebDAV and Folder Sync both operate against the same Telegram channels. Changes made through WebDAV appear in the Remote Tree during the next reconciliation. Keep these rules in mind:
 
-- Let a WebDAV or REST upload finish before editing the same path locally.
+- Let a WebDAV upload finish before editing the same path locally.
 - Simultaneous local and remote edits become an explicit Folder Sync conflict.
-- A large remote delete through WebDAV or REST triggers the same mass-deletion protection.
-- Encrypted files remain subject to the vault and scoped-credential rules described in the WebDAV and REST API guides.
+- A large remote delete through WebDAV triggers the same mass-deletion protection.
+- Encrypted files remain subject to the vault and scoped-credential rules described in the WebDAV guide.
 
-See [WEBDAV_GUIDE.md](WEBDAV_GUIDE.md) and [REST_API_Documentation.md](REST_API_Documentation.md) for connection and authentication details.
+See [WEBDAV_GUIDE.md](WEBDAV_GUIDE.md) for connection and authentication details.

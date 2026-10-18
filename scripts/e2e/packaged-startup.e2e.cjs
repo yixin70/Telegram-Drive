@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const cli = path.resolve(__dirname, '../packaged-startup-smoke.cjs');
@@ -173,3 +173,189 @@ test('Windows smoke retries a transient profile database lock after owned Job re
   { skip: process.platform !== 'win32', timeout: 90000 }, t => lockedProfileJourney(t, 'transient'));
 test('Windows smoke fails closed when an external profile database lock persists',
   { skip: process.platform !== 'win32', timeout: 90000 }, t => lockedProfileJourney(t, 'persistent'));
+
+// Legacy REST absence acceptance: the CLI discovers the exact isolated profile
+// with a genuine launch, seeds a retained enabled api_settings.json plus a benign
+// sentinel only in that validated same-nonce profile, relaunches the same
+// identity and only then asserts the legacy REST port is absent. The controlled
+// second-launch fixtures stand in for a shipped application; they are evidence
+// of this CLI contract, not proof about the packaged application.
+const SENTINEL_BODY = 'telegram-drive-legacy-profile-sentinel\n';
+const LEGACY_DEFAULT_PORT = 8550;
+function availablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); });
+  });
+}
+function acceptsConnections(port, timeout = 500) {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ port, host: '127.0.0.1' });
+    let settled = false;
+    const done = value => { if (settled) return; settled = true; socket.removeAllListeners(); socket.destroy(); resolve(value); };
+    socket.setTimeout(timeout);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+function holdPort(port) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer(socket => socket.destroy());
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+async function absenceJourney(t, mode, { port, observationMs = 100, appArgs = [] } = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'td-packaged-absence-e2e-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const evidence = path.join(directory, 'evidence.json');
+  const args = [cli, '--disposable-user', '--executable', process.execPath,
+    '--args-json', JSON.stringify([app, mode, evidence, ...appArgs]),
+    '--timeout-ms', process.platform === 'win32' ? '20000' : '8000',
+    '--legacy-api-absence', '--legacy-observation-ms', String(observationMs)];
+  if (port !== undefined) args.push('--legacy-api-port', String(port));
+  const result = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 150000 });
+  assert.ifError(result.error);
+  const read = file => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
+  const record = read(evidence);
+  return { result, record, pass2: read(`${evidence}.pass2`),
+    profile: record ? path.join(record.root, record.identifier) : undefined };
+}
+test('legacy REST absence acceptance seeds an enabled free custom port profile before the relaunch, preserves unrelated data and removes exact paths',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result, record, pass2, profile } = await absenceJourney(t, 'upgrade-retired', { port });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Legacy REST absence acceptance passed/);
+    assert.ok(record && pass2, 'The controlled application must report both launches');
+    // The second launch reads the profile at its own initialization, so its
+    // report proves the CLI seeded before the relaunch began.
+    assert.equal(pass2.profile, profile);
+    assert.equal(pass2.seeded.enabled, true, 'Seeded legacy REST config must already be enabled when the second launch initializes');
+    assert.equal(pass2.seeded.port, port);
+    assert.equal(pass2.sentinel, SENTINEL_BODY, 'Unrelated data must already be present when the second launch initializes');
+    assert.equal(fs.existsSync(profile), false, 'The exact isolated profile must be removed');
+    assert.equal(fs.existsSync(record.root), false, 'The private disposable root must be removed');
+  });
+test('legacy REST absence acceptance covers the default legacy port, or reports an already occupied port as a prerequisite',
+  { timeout: 150000 }, async t => {
+    const occupied = await acceptsConnections(LEGACY_DEFAULT_PORT);
+    const { result, pass2 } = await absenceJourney(t, 'upgrade-retired', { port: 'default' });
+    if (occupied) {
+      assert.notEqual(result.status, 0, result.stdout);
+      assert.match(result.stderr, /already accepts connections|could not be confirmed free/i);
+      assert.doesNotMatch(result.stdout, /acceptance passed/);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Legacy REST absence acceptance passed/);
+      assert.equal(pass2.seeded.enabled, true);
+      assert.equal(pass2.seeded.port, LEGACY_DEFAULT_PORT);
+    }
+  });
+test('legacy REST absence acceptance fails when the second launch actually serves the seeded legacy port',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result } = await absenceJourney(t, 'upgrade-rest', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /not retired|owner is not the launched application/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+  });
+test('legacy REST absence acceptance reports an unrelated listener as a prerequisite instead of counting it as absence',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const held = await holdPort(port);
+    t.after(() => new Promise(resolve => held.close(() => resolve())));
+    const { result, record } = await absenceJourney(t, 'upgrade-retired', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /already accepts connections|prerequisite/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+    assert.equal(record, undefined, 'A prerequisite conflict must not launch the controlled application');
+  });
+test('legacy REST absence acceptance fails a second launch that reports the wrong nonce and still cleans up exact paths',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result, record, profile } = await absenceJourney(t, 'upgrade-wrong-token', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /stale application readiness marker/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+    assert.equal(fs.existsSync(profile), false);
+    assert.equal(fs.existsSync(record.root), false);
+  });
+test('legacy REST absence acceptance fails a second launch that reports a profile outside the isolated identity',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result } = await absenceJourney(t, 'upgrade-wrong-profile', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /not the isolated Tauri profile/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+  });
+test('legacy REST absence acceptance refuses a first launch whose readiness names a path outside the isolated profile before seeding',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result, pass2, record } = await absenceJourney(t, 'upgrade-wrong-path', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /not the isolated Tauri profile/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+    assert.equal(pass2, undefined, 'A rejected first pass must never relaunch');
+    assert.equal(fs.existsSync(record.root), false);
+  });
+test('legacy REST absence acceptance fails when the second launch exits before reporting readiness',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result, pass2, record, profile } = await absenceJourney(t, 'upgrade-exit', { port });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /before early exit|before deadline/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+    assert.ok(pass2, 'The seeded profile must still be observable before the controlled exit');
+    assert.equal(fs.existsSync(profile), false);
+    assert.equal(fs.existsSync(record.root), false);
+  });
+test('legacy REST absence acceptance refuses a second launch that reports readiness and then exits during the observation window',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result, pass2, record, profile } = await absenceJourney(t, 'upgrade-ready-exit', { port, observationMs: 1200 });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /exited after readiness|exited naturally|before early exit|before deadline/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+    assert.ok(pass2, 'Readiness had to be reached before the controlled exit');
+    assert.equal(fs.existsSync(profile), false);
+    assert.equal(fs.existsSync(record.root), false);
+  });
+test('legacy REST absence acceptance requires a strictly positive observation window',
+  { timeout: 150000 }, async t => {
+    const port = await availablePort();
+    const { result } = await absenceJourney(t, 'upgrade-retired', { port, observationMs: 0 });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /Invalid legacy API observation window/i);
+    assert.doesNotMatch(result.stdout, /acceptance passed/);
+  });
+// The first authenticated readiness must stay the immutable cleanup authority even
+// when the second launch reports alternative profile paths with the SAME identifier
+// basename. Both profiles live outside the CLI root in an E2E-owned temp folder, so
+// a cleanup that follows the rejected second record leaks the first external
+// profile and deletes the alternate one. These regressions fail on that old flow.
+const ALTERNATE_PROFILE_SENTINEL_BODY = 'telegram-drive-alternate-profile-sentinel\n';
+async function swappedAuthorityJourney(t, swap) {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'td-absence-authority-e2e-'));
+  t.after(() => fs.rmSync(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const firstBase = path.join(sandbox, 'first'), secondBase = path.join(sandbox, 'second');
+  fs.mkdirSync(firstBase); fs.mkdirSync(secondBase);
+  const port = await availablePort();
+  const plan = { first_base: firstBase, second_base: secondBase, swap };
+  const { result, record } = await absenceJourney(t, 'upgrade-swap', { port, appArgs: [JSON.stringify(plan)] });
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /different isolated profile path|refusing to switch cleanup authority/i);
+  assert.doesNotMatch(result.stdout, /acceptance passed/);
+  assert.ok(record, 'The first launch must have reported readiness');
+  const attached = path.join(firstBase, record.identifier), rejected = path.join(secondBase, record.identifier);
+  assert.equal(fs.existsSync(attached), false, 'The first authenticated external profile must still be cleaned after reaping');
+  assert.equal(fs.existsSync(rejected), true, 'The rejected alternate profile must not be deleted');
+  assert.equal(fs.readFileSync(path.join(rejected, '.preservation-sentinel'), 'utf8'), ALTERNATE_PROFILE_SENTINEL_BODY,
+    'The rejected alternate profile sentinel must not be modified');
+}
+test('legacy REST absence acceptance keeps the first authenticated profile as cleanup authority when the second launch swaps app_data_dir',
+  { timeout: 150000 }, t => swappedAuthorityJourney(t, 'app_data_dir'));
+test('legacy REST absence acceptance keeps the first authenticated profile as cleanup authority when the second launch swaps app_cache_dir',
+  { timeout: 150000 }, t => swappedAuthorityJourney(t, 'app_cache_dir'));

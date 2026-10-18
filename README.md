@@ -28,7 +28,7 @@ Telegram Drive turns Telegram's familiar file storage into a focused, desktop-st
 
 This checkout also defaults to **5 TB per week** of combined uploads and downloads (5 TiB, or 5120 GiB in Settings), resetting Monday. Saved quotas at the old 250 GiB default are upgraded without clearing usage; other custom quotas remain unchanged. Telegram's own restrictions still apply.
 
-Large local files now use automatic multipart upload and verified download reassembly, including vault/password encryption. Existing TDENC2 files remain unchanged. Vault-backed multipart audio/video also supports original-quality desktop streaming and seeking while unlocked; passphrase-only preview, transcoding, and raw share/API paths remain unsupported. Older clients cannot reassemble multipart files. See [multipart behavior, recovery and limitations](Docs/MULTIPART.md). Live multi-GB Telegram acceptance is not covered by the local transport fixtures.
+Large local files now use automatic multipart upload and verified download reassembly, including vault/password encryption. Existing TDENC2 files remain unchanged. Vault-backed multipart audio/video also supports original-quality desktop streaming and seeking while unlocked; passphrase-only preview, transcoding, and raw share paths remain unsupported. Older clients cannot reassemble multipart files. See [multipart behavior, recovery and limitations](Docs/MULTIPART.md). Live multi-GB Telegram acceptance is not covered by the local transport fixtures.
 
 > [!IMPORTANT]
 > Telegram Drive is an independent project and is not affiliated with Telegram FZ-LLC. Files remain subject to Telegram's account, service, and per-file limits. Telegram Drive should not be treated as literally unlimited storage or as the only backup of important data.
@@ -54,7 +54,7 @@ Large local files now use automatic multipart upload and verified download reass
 | **Storage model** | Saved Messages is the home location; Telegram channels can be presented as folders |
 | **Transfers** | Files, folders, drag and drop, remote URLs, durable queues, background operation, and retry controls |
 | **Media** | Image preview, PDF viewing, audio playback, video streaming, thumbnails, and archive tools |
-| **Desktop integrations** | Folder Sync, local REST API, WebDAV, local share links, tray controls, and native notifications |
+| **Desktop integrations** | Folder Sync, WebDAV, local share links, tray controls, and native notifications |
 | **Privacy** | Local configuration and caches, opt-in crash reporting, loopback-only local servers, and no separate file relay |
 | **Languages** | English and Spanish only; unsupported saved or system languages fall back to English |
 | **Price** | Every feature is free; no ads, no paid tier, no license server |
@@ -87,7 +87,7 @@ Telegram requires third-party clients to use an application API ID and API hash.
 5. Open **Saved Messages** or select/create Telegram channels to use as folders.
 
 > [!WARNING]
-> Treat the API hash, Telegram login codes, session data, encryption credentials, REST keys, and WebDAV links as secrets. Do not paste them into issues, logs, screenshots, or support messages.
+> Treat the API hash, Telegram login codes, session data, encryption credentials, and WebDAV links as secrets. Do not paste them into issues, logs, screenshots, or support messages.
 
 ## How it works
 
@@ -114,7 +114,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 - Nested channel-backed folders with breadcrumbs, contextual creation, metadata-only moves, automatic layout sync, safe parent-deletion guards, and optional layout backups. Visibility remains per channel; custom folder groups remain local. See [scope and limitations](Docs/NESTED_FOLDERS.md).
 - Whole-folder uploads with optional ZIP creation before transfer.
 - Remote URL uploads with progress, cancellation, retries, redirects, bounded size checks, and resumable ranges when supported by the source server.
-- Duplicate-file, empty-folder, media-metadata, and storage-insight tools through the local REST API.
+- Duplicate-file, large-file, and old-file review through Storage Insights and Cleanup.
 
 ### Reliable transfers and desktop operation
 
@@ -147,12 +147,11 @@ Some media depends on operating-system codec support or FFmpeg. Supported protec
 
 - Password-protected local download links with optional expiration, listing, and revocation.
 - Native Telegram message links for files in public channels.
-- An opt-in desktop REST API for programmatic file, folder, bulk, storage, thumbnail, and media operations.
 - Opt-in desktop WebDAV access for mounting Telegram Drive in compatible file managers.
-- Optional, passphrase-encrypted settings backup through the user's own Telegram Saved Messages. Credentials, API/WebDAV keys, proxy details, and file data are excluded.
+- Optional, passphrase-encrypted settings backup through the user's own Telegram Saved Messages. Credentials, WebDAV keys, proxy details, and file data are excluded.
 
 > [!NOTE]
-> REST, WebDAV, and Telegram Drive share links are served by the running desktop application. They are not hosted public internet links. Keep the app open, do not forward its local ports, and protect every generated password, key, and capability URL.
+> WebDAV and Telegram Drive share links are served by the running desktop application. They are not hosted public internet links. Keep the app open, do not forward its local ports, and protect every generated password, key, and capability URL.
 
 ### Personalization, language, and network controls
 
@@ -227,7 +226,7 @@ The following operations fail closed for encrypted objects while retaining their
 
 - In-app encrypted image and archive previews.
 - Persistent encrypted-file thumbnails, HLS/fMP4 remuxing, and transcoding.
-- Local plaintext share links and REST/local-server plaintext access.
+- Local plaintext share links and local-server plaintext access.
 - WebDAV read, overwrite, rename, move, copy, and delete operations.
 - Remote rename of encrypted Telegram media.
 - Plaintext-to-encrypted migration, decrypt-in-place migration, rekey/slot-management UI, and full format migration.
@@ -243,12 +242,11 @@ Desktop video cards and list rows show poster thumbnails, using a decoded frame 
 - Standard uploads send ordinary file content to Telegram. TDENC2 uploads send ciphertext, although Telegram can still observe transport/account metadata such as ciphertext size, time, account, and destination channel.
 - The project does not operate a separate file-relay service.
 - Crash reporting is disabled by default and requires explicit consent. Reports exclude file names, paths, contents, messages, Telegram identifiers, credentials, phone numbers, and user-entered values.
-- The REST API and WebDAV server are disabled by default and bind only to `127.0.0.1`.
-- The REST API stores only a hash of its generated key; the plaintext key is shown once.
+- The WebDAV server is disabled by default and binds only to `127.0.0.1`.
 - WebDAV capability links are shown once and can be revoked by regeneration.
 - Proxy credentials use the operating system's secure credential manager.
 
-Read the complete [Privacy Policy](PRIVACY.md), [WebDAV guide](WEBDAV_GUIDE.md), and [REST API reference](REST_API_Documentation.md).
+Read the complete [Privacy Policy](PRIVACY.md) and [WebDAV guide](WEBDAV_GUIDE.md).
 
 ## Languages
 
@@ -258,7 +256,7 @@ The application, native notifications, tray menus, and local share-password page
 
 ## Every feature is free
 
-There is no paid tier, subscription, license, or entitlement check. Uploading, downloading, streaming, encryption, Folder Sync, sharing, the local REST API and WebDAV, and every other feature are available without payment, and this checkout shows no advertisements.
+There is no paid tier, subscription, license, or entitlement check. Uploading, downloading, streaming, encryption, Folder Sync, sharing, WebDAV, and every other feature are available without payment, and this checkout shows no advertisements.
 
 ## Android and Google TV (signed APK)
 
@@ -283,16 +281,17 @@ Android requirements and notes:
 - Android validates the package signature during installation. Future compatible updates must use the same signing identity.
 - Release maintainers should follow the [Android and Google TV release runbook](Docs/ANDROID_SIDELOAD_RELEASE.md).
 
-## Local REST API and WebDAV
+## WebDAV access
 
-Both integrations are desktop-only, disabled by default, and loopback-only.
+WebDAV is desktop-only, disabled by default, and loopback-only.
 
 | Integration | Default address | Authentication | Access |
 | --- | --- | --- | --- |
-| **REST API** | `http://127.0.0.1:8550/api/v1` | `X-API-Key` header | File/folder operations, bulk actions, storage data, thumbnails, and media metadata |
 | **WebDAV** | `http://127.0.0.1:8551/dav/<private-token>/` | One-time capability URL | Read-only by default; writes require explicit opt-in |
 
-Do not expose these ports to a LAN or the internet. See the [REST API endpoint reference](REST_API_Documentation.md) and [WebDAV guide](WEBDAV_GUIDE.md) for setup, security behavior, examples, and limitations.
+Do not expose this port to a LAN or the internet. See the [WebDAV guide](WEBDAV_GUIDE.md) for setup, security behavior, examples, and limitations.
+
+The former local REST API has been retired. If you had scripts using `http://127.0.0.1:8550/api/v1`, see the [REST API retirement notice](REST_API_Documentation.md).
 
 ## Documentation
 
@@ -305,7 +304,6 @@ Do not expose these ports to a LAN or the internet. See the [REST API endpoint r
 | [Security Policy](SECURITY.md) | Private vulnerability reporting, redaction guidance, and responsible testing boundaries |
 | [Folder Sync guide](SYNC_GUIDE.md) | Sync safety model, limits, conflict resolution, and integration behavior |
 | [WebDAV guide](WEBDAV_GUIDE.md) | Setup instructions for macOS, Windows, and Linux clients |
-| [REST API reference](REST_API_Documentation.md) | Authentication, endpoints, request examples, and error responses |
 | [Linux packaging guide](Docs/LINUX_PACKAGING.md) | Linux formats, Arch installation, rendering safe mode, diagnostics, and release safeguards |
 | [Linux/Arch implementation plan](Docs/LINUX_ARCH_IMPLEMENTATION_PLAN.md) | Design decisions, compatibility rules, release gates, acceptance matrix, and rollback |
 

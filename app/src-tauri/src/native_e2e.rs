@@ -1580,7 +1580,6 @@ impl Driver {
             | "asset_pin"
             | "asset_cached"
             | "asset_delete"
-            | "api_thumbnail_seed"
             | "asset_clear_all"
             | "asset_status"
             | "asset_offline_seed"
@@ -1638,7 +1637,6 @@ impl Driver {
             | "api_seed_catalog"
             | "start_webdav"
             | "release_retained_sessions"
-            | "start_api"
             | "start_http" => self.dispatch_servers(request).await,
             "peer_queued_clear" | "peer_scan_seed" | "peer_scan_start" | "peer_scan_read"
             | "peer_scan_finish" => self.dispatch_peers(request).await,
@@ -3288,17 +3286,6 @@ impl Driver {
                 .await?;
                 Ok(json!(true))
             }
-            "api_thumbnail_seed" => {
-                let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;
-                let (file, source) =
-                    fixture_asset(&self.root, &account, &request, self.asset_downloads.clone())?;
-                crate::workspace::assets::seed_thumbnail_fixture(
-                    &account,
-                    file,
-                    source.ok_or("No source")?,
-                );
-                Ok(json!(true))
-            }
             "asset_clear_all" => {
                 let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;
                 let cache = self.root.join("asset-cache");
@@ -4259,32 +4246,6 @@ impl Driver {
                     }
                 }
                 Ok(json!(released))
-            }
-            "start_api" => {
-                // The REST API server exactly as the application serves it;
-                // only the Telegram connection is absent.
-                let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(error)?;
-                let address = listener.local_addr().map_err(error)?;
-                let server = crate::api_routes::serve(
-                    listener,
-                    crate::api_routes::ApiServerParts {
-                        telegram: disconnected(),
-                        key_hash: request["key"]
-                            .as_str()
-                            .map(crate::commands::api_settings::hash_key),
-                        cache_dirs: crate::api_routes::CacheDirs {
-                            account_root: self.root.clone(),
-                            thumbnail_dir: self.root.join("thumbnails"),
-                            preview_dir: self.root.join("previews"),
-                        },
-                        bandwidth: self.bandwidth.clone(),
-                        network: self.network.clone(),
-                        database: crate::db::init_db_at(&self.root)?,
-                    },
-                )
-                .map_err(error)?;
-                self.servers.push((server.handle(), tokio::spawn(server)));
-                Ok(json!({"url":format!("http://{address}")}))
             }
             "start_http" => {
                 let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(error)?;

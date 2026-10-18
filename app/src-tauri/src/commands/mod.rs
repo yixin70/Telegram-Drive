@@ -49,7 +49,6 @@ pub struct TelegramState {
     pub cancelled_transfers: Arc<tokio::sync::RwLock<HashSet<String>>>,
 }
 
-pub mod api_settings;
 pub mod archive;
 pub mod auth;
 pub mod crash_reporting;
@@ -71,7 +70,6 @@ pub mod utils;
 pub mod video_metadata;
 pub mod webdav_settings;
 
-pub use api_settings::*;
 pub use archive::*;
 pub use auth::*;
 pub use crash_reporting::*;

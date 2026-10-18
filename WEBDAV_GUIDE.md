@@ -12,7 +12,7 @@ WebDAV hosting is supported on macOS, Windows, and Linux. Android and iOS do not
 4. Select **Generate** and copy the connection link immediately. The private link is shown only once.
 5. Enable the WebDAV server.
 
-The media server port (`14201`) and the port of an enabled REST API cannot be reused. A bind error, including a port already occupied by another program, appears in the WebDAV tab.
+The media server port (`14201`) cannot be reused. A bind error, including a port already occupied by another program, appears in the WebDAV tab.
 
 The generated URL has this form:
 

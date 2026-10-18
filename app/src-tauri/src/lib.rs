@@ -98,7 +98,6 @@ use tokio::sync::Mutex;
 
 pub mod android_security;
 pub mod api_catalog;
-pub mod api_routes;
 pub mod api_secret;
 pub mod crypto_commands;
 pub mod db;
@@ -153,155 +152,8 @@ fn generate_stream_token() -> String {
 /// from the RunEvent::Exit handler for graceful Ctrl+C termination.
 pub struct ActixServerHandle(pub Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>>);
 
-/// Serialized lifecycle for the restartable desktop REST API server.
-pub struct ApiServerLifecycle(pub Arc<server_lifecycle::LocalServerLifecycle>);
-
 /// Serialized lifecycle for the restartable desktop WebDAV server.
 pub struct WebDavServerLifecycle(pub Arc<server_lifecycle::LocalServerLifecycle>);
-
-/// Restart (or stop) the API server based on current settings.
-/// Called from Tauri commands when the user changes API settings.
-#[cfg(not(target_os = "android"))]
-pub async fn restart_api_server(app: &tauri::AppHandle) -> Result<(), String> {
-    let lifecycle = app.state::<ApiServerLifecycle>().0.clone();
-    let generation = lifecycle.request_restart();
-    let _operation = lifecycle.lock_operation().await;
-    if !lifecycle.is_current(generation) {
-        return Ok(());
-    }
-
-    let old_handle = lifecycle.take_handle();
-    if let Some(handle) = old_handle {
-        log::info!("Stopping existing API server...");
-        handle.stop(true).await;
-    }
-    if !lifecycle.is_current(generation) {
-        return Ok(());
-    }
-
-    let settings = commands::api_settings::load_settings(app);
-    if !settings.enabled {
-        log::info!("API server disabled");
-        return Ok(());
-    }
-
-    // Need TelegramState to share with the API server
-    let tg_state = Arc::new(app.state::<TelegramState>().inner().clone());
-    let bw_manager = app
-        .state::<Arc<bandwidth::BandwidthManager>>()
-        .inner()
-        .clone();
-    let net_config = app
-        .state::<Arc<vpn_optimizer::NetworkConfig>>()
-        .inner()
-        .clone();
-    let db_pool = app.state::<db::DbConnection>().inner().clone();
-    let api_port = settings.port;
-    let api_account_root = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?;
-    let key_hash = settings.key_hash.clone();
-    let lifecycle_for_thread = lifecycle.clone();
-
-    // Resolve cache dirs before the thread spawn since app is a reference
-    let preview_dir = app
-        .path()
-        .app_cache_dir()
-        .unwrap_or_default()
-        .join("previews");
-    let thumbnail_dir = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_default()
-        .join("thumbnails");
-
-    let (startup_sender, startup_receiver) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
-        #[cfg(target_os = "windows")]
-        init_com_on_worker_thread();
-        let sys = actix_rt::System::new();
-        sys.block_on(async move {
-            let mut startup_sender = Some(startup_sender);
-            log::info!("Starting REST API server on port {}", api_port);
-            let listener = match server_lifecycle::bind_loopback_with_retry(
-                api_port,
-                &lifecycle_for_thread,
-                generation,
-            )
-            .await
-            {
-                Ok(Some(listener)) => listener,
-                Ok(None) => {
-                    let _ = startup_sender.take().unwrap().send(Ok(()));
-                    return;
-                }
-                Err(error) => {
-                    let message = format!("Could not start REST API on port {api_port}: {error}");
-                    log::error!("{message}");
-                    lifecycle_for_thread.set_error(generation, message.clone());
-                    let _ = startup_sender.take().unwrap().send(Err(message));
-                    return;
-                }
-            };
-
-            let server = match api_routes::serve(
-                listener,
-                api_routes::ApiServerParts {
-                    telegram: tg_state,
-                    key_hash,
-                    cache_dirs: api_routes::CacheDirs {
-                        account_root: api_account_root,
-                        thumbnail_dir,
-                        preview_dir,
-                    },
-                    bandwidth: bw_manager,
-                    network: net_config,
-                    database: db_pool,
-                },
-            ) {
-                Ok(server) => server,
-                Err(error) => {
-                    let message = format!("Could not start REST API on port {api_port}: {error}");
-                    log::error!("{message}");
-                    lifecycle_for_thread.set_error(generation, message.clone());
-                    let _ = startup_sender.take().unwrap().send(Err(message));
-                    return;
-                }
-            };
-            if !lifecycle_for_thread.install_handle(generation, server.handle()) {
-                server.handle().stop(false).await;
-                let _ = startup_sender.take().unwrap().send(Ok(()));
-                let _ = server.await;
-                return;
-            }
-            log::info!("REST API server started on http://127.0.0.1:{}", api_port);
-            let _ = startup_sender.take().unwrap().send(Ok(()));
-            let result = server.await;
-            let error = result
-                .err()
-                .map(|value| format!("REST API server stopped: {value}"));
-            lifecycle_for_thread.server_finished(generation, error);
-        });
-    });
-
-    match startup_receiver.await {
-        Ok(result) => result,
-        Err(_) => {
-            let message = "REST API startup task ended unexpectedly".to_string();
-            lifecycle.set_error(generation, message.clone());
-            Err(message)
-        }
-    }
-}
-
-/// Restart (or stop) the API server based on current settings.
-/// Called from Tauri commands when the user changes API settings.
-#[cfg(target_os = "android")]
-pub async fn restart_api_server(_app: &tauri::AppHandle) -> Result<(), String> {
-    log::info!("REST API disabled on mobile.");
-    Ok(())
-}
 
 /// Restart (or stop) the loopback-only WebDAV server using persisted settings.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1171,7 +1023,6 @@ pub fn run() {
             }
 
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
-            app.manage(ApiServerLifecycle(server_lifecycle::LocalServerLifecycle::new()));
             app.manage(WebDavServerLifecycle(server_lifecycle::LocalServerLifecycle::new()));
 
             let loaded_config = vpn_optimizer::load_network_config(app.handle());
@@ -1307,12 +1158,6 @@ pub fn run() {
             });
 
             // Start independently configured local servers without blocking setup.
-            let api_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = restart_api_server(&api_app).await {
-                    log::error!("REST API startup failed: {error}");
-                }
-            });
             let webdav_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = restart_webdav_server(&webdav_app).await {
@@ -1507,9 +1352,6 @@ pub(crate) fn invoke_handler(
         desktop_lifecycle::cmd_desktop_frontend_unready,
         commands::cmd_auth_qr_login,
         commands::cmd_auth_qr_poll,
-        commands::cmd_get_api_settings,
-        commands::cmd_update_api_settings,
-        commands::cmd_regenerate_api_key,
         commands::webdav_settings::cmd_get_webdav_settings,
         commands::webdav_settings::cmd_update_webdav_settings,
         commands::webdav_settings::cmd_regenerate_webdav_token,
@@ -1658,12 +1500,6 @@ fn run_app(app: tauri::Result<tauri::App>) {
                             handle.stop(true).await;
                         }
                     }
-                    if let Some(api_server) = app_handle.try_state::<ApiServerLifecycle>() {
-                        if let Some(handle) = api_server.0.begin_shutdown() {
-                            log::info!("Stopping REST API server...");
-                            handle.stop(true).await;
-                        }
-                    }
                     if let Some(webdav_server) = app_handle.try_state::<WebDavServerLifecycle>() {
                         if let Some(handle) = webdav_server.0.begin_shutdown() {
                             log::info!("Stopping WebDAV server...");
@@ -1705,12 +1541,6 @@ fn run_app(app: tauri::Result<tauri::App>) {
             }
 
             // 3. Immediate fallbacks for local servers when ExitRequested was bypassed.
-            if let Some(handle) = app_handle.state::<ApiServerLifecycle>().0.begin_shutdown() {
-                log::info!("Stopping REST API server immediately...");
-                tauri::async_runtime::spawn(async move {
-                    handle.stop(false).await;
-                });
-            }
             if let Some(handle) = app_handle
                 .state::<WebDavServerLifecycle>()
                 .0

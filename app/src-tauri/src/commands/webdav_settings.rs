@@ -102,7 +102,7 @@ fn response(app: &AppHandle, settings: WebDavSettingsFile) -> WebDavSettingsResp
     }
 }
 
-fn validate_port(app: &AppHandle, port: u16, enabling: bool) -> Result<(), String> {
+fn validate_port(port: u16) -> Result<(), String> {
     if port < 1024 {
         return Err("Port must be between 1024 and 65535".to_string());
     }
@@ -111,10 +111,6 @@ fn validate_port(app: &AppHandle, port: u16, enabling: bool) -> Result<(), Strin
             "Port {} is used by the media streaming server",
             port
         ));
-    }
-    let api_settings = crate::commands::api_settings::load_settings(app);
-    if enabling && api_settings.enabled && api_settings.port == port {
-        return Err(format!("Port {} is already used by the REST API", port));
     }
     Ok(())
 }
@@ -134,7 +130,7 @@ pub async fn cmd_update_webdav_settings(
     if cfg!(any(target_os = "android", target_os = "ios")) {
         return Err("WebDAV hosting is available in the desktop app".to_string());
     }
-    validate_port(&app, port, enabled)?;
+    validate_port(port)?;
 
     let write_guard = SETTINGS_WRITE_LOCK
         .lock()

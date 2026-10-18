@@ -50,12 +50,18 @@ const updater = config.plugins?.updater;
 if (!updater?.pubkey || !updater.endpoints?.length || !updater.endpoints.every(value => value.startsWith('https://'))) {
   throw new Error('Signed desktop updates require a public key and HTTPS endpoints.');
 }
-// The published REST contract and the registered routes describe the same API.
-const routes = new Set([...fs.readFileSync(path.join(root, 'src-tauri/src/api_routes.rs'), 'utf8')
-  .matchAll(/^#\[(get|post|patch|put|delete)\("([^"]+)"\)\]/gm)].map(([, method, route]) => `${method} ${route}`));
-const contract = new Set(Object.entries(json('src-tauri/api/openapi-v1.json').paths)
-  .flatMap(([route, operations]) => Object.keys(operations).map(method => `${method} ${route}`)));
-const drift = [...routes].filter(value => !contract.has(value)).map(value => `undocumented: ${value}`)
-  .concat([...contract].filter(value => !routes.has(value)).map(value => `not implemented: ${value}`));
-if (!routes.size || drift.length) throw new Error(`REST contract differs from the routes: ${drift.join('; ') || 'no routes found'}`);
-console.log('[app-security] WebView CSP, capability, updater and REST contract configuration passed.');
+// The local REST API surface is retired: its transport module, dedicated
+// settings commands, lifecycle and published OpenAPI document must stay gone.
+// This is a narrow production-source guard; it supplements, and does not
+// replace, the native/browser absence acceptance. It intentionally reads only
+// production sources and never test/fixture literals.
+for (const retired of ['src-tauri/src/api_routes.rs', 'src-tauri/src/commands/api_settings.rs', 'src-tauri/api/openapi-v1.json']) {
+  if (fs.existsSync(path.join(root, retired))) throw new Error(`Retired REST API file is present: ${retired}`);
+}
+const retiredTokens = ['api_routes', 'ApiServerLifecycle', 'api_settings', 'cmd_get_api_settings', 'cmd_update_api_settings', 'cmd_regenerate_api_key'];
+for (const file of ['src-tauri/src/lib.rs', 'src-tauri/src/commands/mod.rs']) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  const found = retiredTokens.filter(token => source.includes(token));
+  if (found.length) throw new Error(`Retired REST API reference in ${file}: ${found.join(', ')}`);
+}
+console.log('[app-security] WebView CSP, capability, updater and retired REST surface configuration passed.');

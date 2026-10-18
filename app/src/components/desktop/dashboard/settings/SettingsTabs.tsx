@@ -219,13 +219,12 @@ export function PrivacySettingsTab({ crashReportingEnabled, onCrashReportingChan
 }
 
 interface AdvancedSettingsTabProps {
-  onOpenApi: () => void;
   onOpenWebDav: () => void;
   onOpenProxy: () => void;
   onOpenVpn: () => void;
 }
 
-export function AdvancedSettingsTab({ onOpenApi, onOpenWebDav, onOpenProxy, onOpenVpn }: AdvancedSettingsTabProps) {
+export function AdvancedSettingsTab({ onOpenWebDav, onOpenProxy, onOpenVpn }: AdvancedSettingsTabProps) {
     useTranslation();
   return (
     <motion.section key="advanced" {...tabMotion} className="space-y-4">
@@ -233,7 +232,6 @@ export function AdvancedSettingsTab({ onOpenApi, onOpenWebDav, onOpenProxy, onOp
       <div><h3 className="text-base font-semibold text-app-text">{i18n.t("settings.tab_advanced")}</h3><p className="mt-1 text-sm text-app-text-secondary">Power-user connections are grouped here so everyday settings stay calm and focused. Use the settings search to find any option by name.</p></div>
       <div className="grid gap-3 sm:grid-cols-2">
         {([
-          ['REST API', i18n.t('advanced_copy.rest_description'), Globe, onOpenApi],
           ['WebDAV', i18n.t('advanced_copy.webdav_description'), HardDrive, onOpenWebDav],
           [i18n.t('common.proxy'), i18n.t('advanced_copy.proxy_description'), Shield, onOpenProxy],
           [i18n.t('advanced_copy.vpn_title'), i18n.t('advanced_copy.vpn_description'), Zap, onOpenVpn],

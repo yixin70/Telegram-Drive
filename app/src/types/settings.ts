@@ -32,7 +32,6 @@ export interface Settings {
   /** Vault the completed drill was run against; empty for drills recorded before 4.0. */
   vaultRecoveryDrillVaultId: string;
   webdavPermissionExplained: boolean;
-  restPermissionExplained: boolean;
   downloadWebdavTipSeen: boolean;
   proxyEnabled: boolean;
   proxyType: 'socks5' | 'http' | 'https';

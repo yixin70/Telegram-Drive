@@ -319,7 +319,11 @@ export async function desktopFixture(page: Page, options: {
             const ids=state.jobs.filter(job=>!job.persistencePending && job.direction===args.direction && job.ownerId===args.ownerId && (job.status==='completed' || args.includeFailedAndCancelled && ['failed','cancelled'].includes(job.status))).map(job=>job.id);
             state.jobs=state.jobs.filter(job=>!ids.includes(job.id));for(const id of ids)state.emit('transfer-removed',id);return ids;
           }
-          if (command === 'cmd_get_api_settings') return { enabled: options.networkEnabled ?? false, running: options.networkEnabled ?? false, port: 14201,key_set:true,last_error:null };
+          // The REST API surface was retired, so its IPC commands (cmd_get_api_settings,
+          // cmd_update_api_settings, cmd_regenerate_api_key) no longer exist in the
+          // application and this fixture no longer mocks them. The invoke is already
+          // recorded above; this tripwire surfaces a stray call instead of hiding it.
+          if (['cmd_get_api_settings','cmd_update_api_settings','cmd_regenerate_api_key'].includes(command)) { console.log(`[desktop-fixture] retired REST IPC invoked: ${command}`); throw new Error(`REST_RETIRED: ${command}`); }
           if (command === 'cmd_get_webdav_settings') return { enabled: options.networkEnabled ?? false, running: options.networkEnabled ?? false, port: 14202,supported:true,token_set:true,write_enabled:true,last_error:null };
           if (command === 'cmd_get_offline_cache_status') return { files: [], total_bytes: 0, max_bytes: 1_000_000_000 };
           if (command === 'cmd_get_installation_info') return { managedByPackageManager: options.packageManaged ?? false, packageManager: options.packageManaged ? 'pacman' : null };

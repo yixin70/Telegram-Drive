@@ -537,8 +537,7 @@
           <article class="feature"><span class="feature-num">02</span><h3>Controlled sharing</h3><p>Telegram links and password-protected local links with expiration controls.</p></article>
           <article class="feature"><span class="feature-num">03</span><h3>Optional encryption</h3><p>Protect selected transfers with authenticated TDENC2 envelopes and local vault keys.</p></article>
           <article class="feature"><span class="feature-num">04</span><h3>WebDAV</h3><p>Opt-in local file-manager access with capability links and read-only defaults.</p></article>
-          <article class="feature"><span class="feature-num">05</span><h3>REST API</h3><p>Local automation endpoints protected by an API key and disabled by default.</p></article>
-          <article class="feature"><span class="feature-num">06</span><h3>Folder Sync</h3><p>Opt-in bidirectional sync between local folders and Telegram channels on Windows, macOS, and Linux.</p></article>
+          <article class="feature"><span class="feature-num">05</span><h3>Folder Sync</h3><p>Opt-in bidirectional sync between local folders and Telegram channels on Windows, macOS, and Linux.</p></article>
         </div>
         <aside class="language-panel" id="languages" aria-labelledby="languages-title">
           <div class="language-header">
@@ -609,7 +608,7 @@
           </div>
           <div class="trust-list">
             <div class="trust-item"><strong>Local credentials</strong><span>Telegram credentials, vault keys, and connection settings stay on the device unless you explicitly use encrypted settings sync.</span></div>
-            <div class="trust-item"><strong>Local services are opt-in</strong><span>REST and WebDAV are disabled by default, bind to loopback by default, and require capability credentials.</span></div>
+            <div class="trust-item"><strong>Local services are opt-in</strong><span>WebDAV is disabled by default, binds to loopback by default, and requires a capability URL.</span></div>
             <div class="trust-item"><strong>Encryption is explicit</strong><span>Protection is optional and recovery is your responsibility. Keep independent backups of important files and recovery material.</span></div>
             <div class="trust-item"><strong>Source available for review</strong><span>Application code, build configuration, and release history are public on GitHub.</span></div>
           </div>
@@ -659,7 +658,7 @@
           <details><summary>Does Folder Sync start automatically?</summary><p>No. Folder Sync is off by default and must be enabled explicitly in Settings. On Windows, macOS, and Linux, you can then map a local folder to a Telegram channel and choose how to resolve any conflicts.</p></details>
           <details><summary>Does the app have a paid version?</summary><p>No. Every feature is free, and there is no paid tier, subscription, license, or checkout. This build shows no advertisements and makes no requests to advertising providers.</p></details>
           <details><summary>Do normal updates require reactivation?</summary><p>No. A verified device keeps its secure entitlement through normal application updates. Keep the recovery code for reinstalls or another eligible device; the license supports up to three supported Windows, macOS, Linux, or Android devices in total.</p></details>
-          <details><summary>Are WebDAV and the REST API public?</summary><p>They are disabled by default and bind to loopback by default. REST uses an API key, while WebDAV uses a capability URL and starts in read-only mode. Network exposure remains under the user’s control.</p></details>
+          <details><summary>Is WebDAV public?</summary><p>No. It is disabled by default and binds to loopback by default. WebDAV uses a capability URL and starts in read-only mode. Network exposure remains under the user’s control.</p></details>
           <details><summary>Is Telegram-Drive affiliated with Telegram?</summary><p>No. Telegram-Drive is an independent open-source project that uses Telegram’s client API. Review the <a href="https://github.com/caamer20/Telegram-Drive" target="_blank" rel="noopener noreferrer">source and documentation on GitHub</a>.</p></details>
         </div>
       </div>

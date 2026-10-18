@@ -49,11 +49,167 @@ struct Backend {
     input: ChildStdin,
     replies: Receiver<Value>,
     heic_pending: bool,
+    // Set only for the isolated WebDAV IPC journey: the parent-owned nonce and
+    // identifier that gate cleanup of fresh, identifier-named Tauri profiles.
+    profile: Option<ProfileCleanup>,
+}
+
+struct ProfileCleanup {
+    root: PathBuf,
+    identifier: String,
+    nonce: String,
+}
+
+impl ProfileCleanup {
+    /// Read and validate the parent-owned identity *before* any child exists, so
+    /// a malformed fixture cannot leak a bare, untracked process.
+    fn prepare(root: &Path) -> Self {
+        let identifier = read_trim(&root.join("ipc-identifier"))
+            .unwrap_or_else(|error| panic!("isolated WebDAV identifier unreadable: {error}"));
+        let nonce = read_trim(&root.join("ipc-nonce"))
+            .unwrap_or_else(|error| panic!("isolated WebDAV nonce unreadable: {error}"));
+        let expected = format!("com.telegramdrive.ipc-webdav-e2e.{nonce}");
+        assert_eq!(
+            identifier, expected,
+            "isolated WebDAV identifier must be the generated prefix plus its nonce"
+        );
+        assert!(
+            nonce.len() == 32
+                && nonce
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+            "isolated WebDAV nonce must be the generated uuid"
+        );
+        Self {
+            root: root.to_path_buf(),
+            identifier,
+            nonce,
+        }
+    }
+    /// A reap record is written only after `wait` proved the child exited.
+    fn record_reaped(&self, pid: u32) {
+        let record = json!({
+            "identifier": self.identifier, "nonce": self.nonce, "pid": pid, "reaped": true,
+        });
+        let _ = std::fs::write(self.root.join("ipc-reap.json"), record.to_string());
+    }
+    fn record_reap_failed(&self, pid: u32, error: &str) {
+        let record = json!({
+            "identifier": self.identifier, "nonce": self.nonce, "pid": pid,
+            "reaped": false, "error": error,
+        });
+        let _ = std::fs::write(self.root.join("ipc-reap-failed.json"), record.to_string());
+    }
+    fn clean(&self) {
+        cleanup_owned_profiles(&self.root, &self.identifier, &self.nonce);
+    }
+}
+
+fn read_trim(path: &Path) -> Result<String, std::io::Error> {
+    Ok(std::fs::read_to_string(path)?.trim().to_string())
+}
+
+fn is_reparse(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn plain_directory(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata.is_dir() && !is_reparse(&metadata),
+        Err(_) => false,
+    }
+}
+
+fn ancestors_are_plain(path: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(directory) = current {
+        if !plain_directory(directory) {
+            return false;
+        }
+        current = directory.parent();
+    }
+    true
+}
+
+/// Delete only fresh, identifier-named profile leaves that carry this parent's
+/// exact nonce marker. A path is skipped unless it is absolute, its basename is
+/// the exact identifier, it and every existing ancestor are real (never a
+/// symlink or Windows reparse point), and its ownership marker is a regular file
+/// holding our nonce. Canonicalization failures skip rather than fall back to a
+/// raw path, and nothing preexisting is removed without this run's marker.
+fn cleanup_owned_profiles(root: &Path, identifier: &str, nonce: &str) -> usize {
+    let Ok(raw) = std::fs::read_to_string(root.join("ipc-profile.json")) else {
+        return 0;
+    };
+    let Ok(record) = serde_json::from_str::<Value>(&raw) else {
+        return 0;
+    };
+    if record["identifier"].as_str() != Some(identifier) || record["nonce"].as_str() != Some(nonce)
+    {
+        return 0;
+    }
+    let mut removed = 0;
+    let mut seen = std::collections::HashSet::new();
+    if let Some(paths) = record["paths"].as_array() {
+        for entry in paths {
+            let Some(path) = entry.as_str().map(PathBuf::from) else {
+                continue;
+            };
+            if !path.is_absolute()
+                || path.file_name().and_then(|value| value.to_str()) != Some(identifier)
+                || !plain_directory(&path)
+                || !ancestors_are_plain(&path)
+            {
+                continue;
+            }
+            let marker = path.join("ipc-e2e-owner");
+            match std::fs::symlink_metadata(&marker) {
+                Ok(metadata) if metadata.is_file() && !is_reparse(&metadata) => {}
+                _ => continue,
+            }
+            let marked = std::fs::read_to_string(&marker)
+                .ok()
+                .as_deref()
+                .map(str::trim)
+                == Some(nonce);
+            if !marked {
+                continue;
+            }
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+            if !seen.insert(canonical) {
+                continue;
+            }
+            if std::fs::remove_dir_all(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 // Child readiness is setup, before any application journey clock.
 const NATIVE_FIXTURE_STARTUP: Duration = Duration::from_secs(120);
 impl Backend {
     fn start(root: &Path) -> Self {
+        // Validate the parent-owned identity before any child exists, so a
+        // malformed fixture cannot leak a bare, untracked process.
+        let profile = if root.join(".ipc-webdav-fixture").exists() {
+            Some(ProfileCleanup::prepare(root))
+        } else {
+            None
+        };
         // An alternate, freshly linked driver lets Windows journeys run without
         // replacing the executable held open by another long-running suite.
         let driver = std::env::var_os("NATIVE_E2E_DRIVER")
@@ -73,7 +229,7 @@ impl Backend {
             command.env("PATH", root.join("video-upload-codec"));
         }
         #[cfg(windows)]
-        if root.join(".ipc-stack-fixture").exists() {
+        if root.join(".ipc-stack-fixture").exists() || root.join(".ipc-webdav-fixture").exists() {
             command.arg("--ipc-stack");
         }
         let mut child = command
@@ -101,6 +257,7 @@ impl Backend {
             input,
             replies,
             heic_pending: false,
+            profile,
         };
         assert_eq!(
             instance
@@ -182,8 +339,23 @@ impl Backend {
 }
 impl Drop for Backend {
     fn drop(&mut self) {
+        // A reap is proven only by a successful wait: a kill error is not proof,
+        // and only a proven reap may delete the owned profile.
+        let pid = self.child.id();
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        match self.child.wait() {
+            Ok(_) => {
+                if let Some(profile) = &self.profile {
+                    profile.record_reaped(pid);
+                    profile.clean();
+                }
+            }
+            Err(error) => {
+                if let Some(profile) = &self.profile {
+                    profile.record_reap_failed(pid, &error.to_string());
+                }
+            }
+        }
     }
 }
 
@@ -494,7 +666,7 @@ fn notes_backup_files_are_complete_bounded_and_do_not_overwrite_existing_files()
     wrong_owner["owner"] = json!("202");
     fixture.write(
         "wrong-owner.tdnotes.json",
-        &serde_json::to_vec(&wrong_owner).unwrap(),
+        serde_json::to_vec(&wrong_owner).unwrap(),
     );
     assert!(app.failure(json!({"command":"notes_import_file", "owner":"101", "path":"wrong-owner.tdnotes.json", "policy":"replace"})).contains("ACCOUNT_CHANGED"));
     assert_eq!(
@@ -791,7 +963,247 @@ fn native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack() {
             .failure(json!({"command":"not_a_command", "payload":{}}))
             .contains("not found"));
     }
+    // The retired REST settings/key commands are unregistered. Through the real
+    // production invoke dispatcher they are unknown: they must not be handled,
+    // must not parse arguments and must not touch the isolated profile.
+    for retired in [
+        "cmd_get_api_settings",
+        "cmd_update_api_settings",
+        "cmd_regenerate_api_key",
+    ] {
+        let error = app.failure(json!({"command": retired, "payload": {}}));
+        assert!(error.contains("not found"), "{retired}: {error}");
+    }
     app.stop();
+}
+
+#[test]
+#[cfg(windows)]
+fn native_ipc_webdav_settings_use_a_free_former_rest_port_and_refuse_reserved_ones() {
+    fn tcp_reachable(port: u16) -> bool {
+        let address: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if std::net::TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    // Reserve every port for the whole journey so concurrent tests cannot race
+    // the child for it. The former-REST port is released only immediately before
+    // the enable command; the synthetic alt and the occupied port stay held.
+    let free_reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let free = free_reservation.local_addr().unwrap().port();
+    let alt_reservation = loop {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        if listener.local_addr().unwrap().port() != free {
+            break listener;
+        }
+    };
+    let alternate = alt_reservation.local_addr().unwrap().port();
+    let held = loop {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        if port != free && port != alternate {
+            break listener;
+        }
+    };
+    let held_port = held.local_addr().unwrap().port();
+
+    let fixture = Fixture::new();
+    fixture.write(".ipc-webdav-fixture", b"isolated WebDAV IPC\n");
+    // The parent supplies a fresh random identity; the child cannot gain
+    // cleanup authority from an identity of its own choosing.
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let identifier = format!("com.telegramdrive.ipc-webdav-e2e.{nonce}");
+    fixture.write("ipc-identifier", identifier.as_bytes());
+    fixture.write("ipc-nonce", nonce.as_bytes());
+    // A synthetic, divergent actual streaming port proves the WebDAV validator
+    // excludes the live port, not only the constant, without booting media.
+    fixture.write("ipc-stream-port", alternate.to_string().as_bytes());
+    let mut app = Backend::start(&fixture.0);
+
+    // The child resolved the real Tauri profile paths for the parent-supplied
+    // identifier and reported them in the private fixture manifest.
+    let manifest: Value = serde_json::from_slice(&fixture.read("ipc-profile.json")).unwrap();
+    assert_eq!(manifest["identifier"].as_str(), Some(identifier.as_str()));
+    assert_eq!(manifest["nonce"].as_str(), Some(nonce.as_str()));
+    let app_data = PathBuf::from(manifest["appData"].as_str().unwrap());
+    assert_eq!(
+        app_data.file_name().and_then(|value| value.to_str()),
+        Some(identifier.as_str())
+    );
+    assert!(app_data.is_dir());
+
+    // A legacy enabled REST configuration and an unrelated sentinel already
+    // occupy app_data before any command runs.
+    let legacy = json!({"enabled":true,"port":free,"key_hash":"deadbeef"});
+    std::fs::write(app_data.join("api_settings.json"), legacy.to_string()).unwrap();
+    std::fs::write(app_data.join("unrelated-sentinel.json"), "keep me").unwrap();
+
+    let defaults = app.ok(json!({"command":"cmd_get_webdav_settings", "payload":{}}));
+    assert_eq!(defaults["supported"], true);
+    assert_eq!(defaults["enabled"], false);
+    assert_eq!(defaults["port"], 8551);
+    assert_eq!(defaults["token_set"], false);
+    assert_eq!(defaults["running"], false);
+
+    let token = app.ok(json!({"command":"cmd_regenerate_webdav_token", "payload":{}}));
+    assert_eq!(token["token"].as_str().unwrap().len(), 64);
+    assert!(token["url"].as_str().unwrap().contains(":8551/dav/"));
+
+    // Release the former-REST reservation only now, immediately before enabling.
+    drop(free_reservation);
+    // Enabling WebDAV on the free former REST port must really bind it: the
+    // legacy REST configuration is inert and reserves nothing.
+    let enabled = app.ok(json!({
+        "command":"cmd_update_webdav_settings",
+        "payload":{"enabled":true,"port":free,"writeEnabled":true}
+    }));
+    assert_eq!(enabled["enabled"], true);
+    assert_eq!(enabled["port"], free);
+    assert_eq!(enabled["running"], true);
+    assert!(tcp_reachable(free), "WebDAV must listen on {free}");
+
+    // Invalid and reserved ports are refused without disturbing the running
+    // configuration.
+    assert!(app
+        .failure(json!({"command":"cmd_update_webdav_settings",
+            "payload":{"enabled":true,"port":1023,"writeEnabled":true}}))
+        .contains("between 1024 and 65535"));
+    assert!(app
+        .failure(json!({"command":"cmd_update_webdav_settings",
+            "payload":{"enabled":true,"port":14201,"writeEnabled":true}}))
+        .contains("media streaming server"));
+    assert!(app
+        .failure(json!({"command":"cmd_update_webdav_settings",
+            "payload":{"enabled":true,"port":alternate,"writeEnabled":true}}))
+        .contains("media streaming server"));
+    let unchanged = app.ok(json!({"command":"cmd_get_webdav_settings", "payload":{}}));
+    assert_eq!(unchanged["enabled"], true);
+    assert_eq!(unchanged["port"], free);
+    assert_eq!(unchanged["running"], true);
+
+    // An occupied port does not fail the command: the requested settings are
+    // persisted, the update reports Ok, and the status carries the bind error.
+    let occupied = app.ok(json!({"command":"cmd_update_webdav_settings",
+        "payload":{"enabled":true,"port":held_port,"writeEnabled":true}}));
+    assert_eq!(occupied["enabled"], true);
+    assert_eq!(occupied["port"], held_port);
+    assert_eq!(occupied["running"], false);
+    assert!(occupied["last_error"]
+        .as_str()
+        .unwrap()
+        .contains("Could not start WebDAV"));
+    let stuck = app.ok(json!({"command":"cmd_get_webdav_settings", "payload":{}}));
+    assert_eq!(stuck["port"], held_port);
+    assert_eq!(stuck["running"], false);
+    assert!(stuck["last_error"].as_str().is_some());
+
+    // Recovery clears the error and listens again on a fresh free port, reserved
+    // until the command is ready to run.
+    let recovered_reservation = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let recovered_port = recovered_reservation.local_addr().unwrap().port();
+    drop(recovered_reservation);
+    let recovered = app.ok(json!({"command":"cmd_update_webdav_settings",
+        "payload":{"enabled":true,"port":recovered_port,"writeEnabled":true}}));
+    assert_eq!(recovered["running"], true);
+    assert_eq!(recovered["last_error"], Value::Null);
+    assert!(tcp_reachable(recovered_port));
+
+    // Disabling stops hosting; the legacy REST file and the unrelated sentinel
+    // were never read, rewritten or removed.
+    let disabled = app.ok(json!({"command":"cmd_update_webdav_settings",
+        "payload":{"enabled":false,"port":recovered_port,"writeEnabled":false}}));
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(disabled["running"], false);
+    assert_eq!(
+        std::fs::read_to_string(app_data.join("api_settings.json")).unwrap(),
+        legacy.to_string()
+    );
+    assert_eq!(
+        std::fs::read_to_string(app_data.join("unrelated-sentinel.json")).unwrap(),
+        "keep me"
+    );
+
+    // Graceful stop reaps the child; its Drop then deletes only the owned,
+    // nonce-marked profile leaves the parent had created for this run.
+    let owned: Vec<String> = manifest["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_string())
+        .collect();
+    assert!(!owned.is_empty());
+    app.stop();
+    // The parent wrote a reap record only because the child actually exited.
+    let reap: Value = serde_json::from_slice(&fixture.read("ipc-reap.json")).unwrap();
+    assert_eq!(reap["reaped"], true);
+    assert_eq!(reap["identifier"].as_str(), Some(identifier.as_str()));
+    assert_eq!(reap["nonce"].as_str(), Some(nonce.as_str()));
+    assert!(reap["pid"].as_u64().unwrap() > 0);
+    assert!(
+        !app_data.exists(),
+        "owned profile must be removed after the run"
+    );
+    for path in owned {
+        assert!(
+            !PathBuf::from(&path).exists(),
+            "owned profile {path} must be removed"
+        );
+    }
+    drop(held);
+}
+
+#[test]
+#[cfg(windows)]
+fn native_ipc_webdav_readiness_failure_still_reaps_and_cleans_the_fresh_profile() {
+    let fixture = Fixture::new();
+    fixture.write(".ipc-webdav-fixture", b"isolated WebDAV IPC\n");
+    // The child owns a fresh profile, then fails before the WebView is ready.
+    fixture.write("ipc-fail-before-ready", b"controlled\n");
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let identifier = format!("com.telegramdrive.ipc-webdav-e2e.{nonce}");
+    fixture.write("ipc-identifier", identifier.as_bytes());
+    fixture.write("ipc-nonce", nonce.as_bytes());
+
+    let failing = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _backend = Backend::start(&fixture.0);
+    }));
+    assert!(
+        failing.is_err(),
+        "a readiness failure after profile ownership must surface"
+    );
+
+    // The reap record exists only because `wait` proved the child exited.
+    let reap: Value = serde_json::from_slice(&fixture.read("ipc-reap.json")).unwrap();
+    assert_eq!(reap["reaped"], true);
+    assert_eq!(reap["identifier"].as_str(), Some(identifier.as_str()));
+    assert_eq!(reap["nonce"].as_str(), Some(nonce.as_str()));
+    assert!(reap["pid"].as_u64().unwrap() > 0);
+
+    // The child owned a fresh profile before failing; after the proven reap the
+    // parent removed every recorded leaf.
+    let manifest: Value = serde_json::from_slice(&fixture.read("ipc-profile.json")).unwrap();
+    assert_eq!(manifest["identifier"].as_str(), Some(identifier.as_str()));
+    let paths = manifest["paths"].as_array().unwrap();
+    assert!(
+        !paths.is_empty(),
+        "the child must have owned a fresh profile before failing"
+    );
+    for path in paths {
+        let leaf = PathBuf::from(path.as_str().unwrap());
+        assert!(
+            !leaf.exists(),
+            "owned profile {} must be removed after the reap",
+            leaf.display()
+        );
+    }
 }
 
 #[test]
@@ -1290,6 +1702,19 @@ async fn real_http_server_streams_owned_cache_and_revokes_it_after_account_switc
     assert_eq!(response.status(), 206);
     assert_eq!(response.headers()["content-range"], "bytes 4-12/64");
     assert_eq!(response.bytes().await.unwrap().as_ref(), &fmp4_bytes[4..13]);
+    // The retired REST API is gone. The surviving media/stream server must not
+    // resurrect its health, schema or protected operations on any path, and it
+    // offers no drop-in replacement API.
+    for path in [
+        "/api/v1/health",
+        "/api/v1/openapi.json",
+        "/api/v1/files",
+        "/api/v1/files/1/thumbnail",
+        "/api/v1/storage/stats",
+    ] {
+        let retired = client.get(format!("{url}{path}")).send().await.unwrap();
+        assert_eq!(retired.status(), 404, "retired route {path}");
+    }
     app.ok(json!({"command":"seed_account","owner":202}));
     assert_eq!(client.get(&fmp4).send().await.unwrap().status(), 403);
     for token in ["private", "legacy"] {
@@ -2501,324 +2926,6 @@ fn hierarchy_same_folder_conflicts_duplicate_delivery_and_corrupt_history_preser
     assert_eq!(applied["folders"], preview["folders"]);
     first.stop();
     second.stop();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rest_api_routes_authenticate_and_reach_their_own_handlers() {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap();
-    let fixture = Fixture::new();
-    let mut app = Backend::start(&fixture.0);
-    app.ok(json!({"command":"database"}));
-    app.ok(json!({"command":"seed_account","owner":101}));
-    let key = "synthetic-e2e-api-key";
-    let url = app.ok(json!({"command":"start_api","key":key}))["url"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let health = client
-        .get(format!("{url}/api/v1/health"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(health.status(), 200);
-    assert_eq!(health.json::<Value>().await.unwrap()["status"], "ok");
-
-    for (header, message) in [
-        (None, "Missing X-API-Key header"),
-        (Some("wrong"), "Invalid API key"),
-    ] {
-        let mut request = client.get(format!("{url}/api/v1/files"));
-        if let Some(header) = header {
-            request = request.header("X-API-Key", header);
-        }
-        let response = request.send().await.unwrap();
-        assert_eq!(response.status(), 401);
-        let body = response.json::<Value>().await.unwrap();
-        assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-        assert_eq!(body["error"]["message"], message);
-    }
-
-    // Search has its own handler. It must not be taken for a file identifier.
-    let get = |path: &str| {
-        client
-            .get(format!("{url}{path}"))
-            .header("X-API-Key", key)
-            .send()
-    };
-    let search = get("/api/v1/files/search?q=report").await.unwrap();
-    assert_eq!(
-        search.status(),
-        503,
-        "search reaches its handler and reports the missing connection"
-    );
-    assert_eq!(
-        search.json::<Value>().await.unwrap()["error"]["code"],
-        "NOT_CONNECTED"
-    );
-
-    // Malformed input is refused before anything is read.
-    for (path, code) in [
-        ("/api/v1/files/search", "INVALID_QUERY"),
-        ("/api/v1/files?created_after=yesterday", "INVALID_TIMESTAMP"),
-        ("/api/v1/files?folder_id=photos", "INVALID_FOLDER_ID"),
-        // 2^32 + 7 must not be read as file 7.
-        ("/api/v1/files/4294967303", "INVALID_FILE_ID"),
-        ("/api/v1/files/4294967303/download", "INVALID_FILE_ID"),
-        ("/api/v1/files/0/thumbnail", "INVALID_FILE_ID"),
-    ] {
-        let response = get(path).await.unwrap();
-        assert_eq!(response.status(), 400, "{path}");
-        assert_eq!(
-            response.json::<Value>().await.unwrap()["error"]["code"],
-            code,
-            "{path}"
-        );
-    }
-    // Errors from malformed input have the documented shape too.
-    for (request, status, code) in [
-        (
-            client.get(format!("{url}/api/v1/files?page=first")),
-            400,
-            "INVALID_QUERY",
-        ),
-        (
-            client
-                .post(format!("{url}/api/v1/folders"))
-                .body("{")
-                .header("content-type", "application/json"),
-            400,
-            "INVALID_BODY",
-        ),
-        (
-            client.get(format!("{url}/api/v1/files/report.pdf")),
-            404,
-            "NOT_FOUND",
-        ),
-    ] {
-        let response = request.header("X-API-Key", key).send().await.unwrap();
-        assert_eq!(response.status(), status);
-        assert_eq!(
-            response.json::<Value>().await.unwrap()["error"]["code"],
-            code
-        );
-    }
-    let truncated = client
-        .delete(format!("{url}/api/v1/files/4294967303"))
-        .header("X-API-Key", key)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        truncated.status(),
-        400,
-        "an out-of-range identifier never deletes another file"
-    );
-
-    // The published contract names real routes: every documented operation
-    // exists and, unless marked public, refuses a request without a key.
-    let contract = client
-        .get(format!("{url}/api/v1/openapi.json"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(contract.status(), 200);
-    let contract = contract.json::<Value>().await.unwrap();
-    assert_eq!(contract["openapi"], "3.1.0");
-    let mut operations = 0;
-    for (path, methods) in contract["paths"].as_object().unwrap() {
-        let concrete = path
-            .replace("{message_id}", "5")
-            .replace("{folder_id}", "7");
-        for (method, operation) in methods.as_object().unwrap() {
-            let public = operation["security"]
-                .as_array()
-                .is_some_and(|list| list.is_empty());
-            let response = client
-                .request(
-                    method.to_uppercase().parse().unwrap(),
-                    format!("{url}{concrete}"),
-                )
-                .send()
-                .await
-                .unwrap();
-            let expected = if public { 200 } else { 401 };
-            assert_eq!(response.status(), expected, "{method} {path}");
-            operations += 1;
-        }
-    }
-    assert_eq!(operations, 20, "the contract covers every route");
-    app.stop();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rest_api_lists_search_and_reports_cover_the_whole_library_of_one_account() {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .unwrap();
-    let fixture = Fixture::new();
-    let mut app = Backend::start(&fixture.0);
-    app.ok(json!({"command":"database"}));
-    app.ok(json!({"command":"seed_account","owner":101}));
-    let key = "synthetic-e2e-api-key";
-    let url = app.ok(json!({"command":"start_api","key":key}))["url"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    // 230 files in one folder: more than any page, and more than the 100 to
-    // 200 newest messages earlier releases looked at.
-    let mut files = Vec::new();
-    for index in 1..=230_i64 {
-        let day = 1 + (index - 1) / 24;
-        let hour = (index - 1) % 24;
-        files.push(json!({
-            "id": index, "folder": 500,
-            "name": format!("report-{index:03}.pdf"),
-            "size": 1000 + index, "mime": "application/pdf",
-            "created": format!("2026-03-{day:02}T{hour:02}:00:00Z"),
-        }));
-    }
-    // A renamed copy of report-001 in another folder, an encrypted envelope,
-    // and one file in Saved Messages.
-    files.push(
-        json!({"id": 1, "folder": 600, "name": "Renamed copy.pdf", "uploadedAs": "report-001.pdf",
-        "size": 1001, "mime": "application/pdf", "created": "2026-04-02T08:30:00Z"}),
-    );
-    files.push(json!({"id": 2, "folder": 600, "name": "TDENC2", "uploadedAs": "c0ffee.tdenc", "encrypted": true,
-        "size": 4096, "mime": "application/octet-stream", "created": "2026-04-03T09:00:00Z"}));
-    files.push(json!({"id": 9, "folder": null, "name": "notes.txt",
-        "size": 12, "mime": "text/plain", "created": "2026-01-15T12:00:00Z"}));
-    app.ok(json!({"command":"api_seed_catalog",
-        "folders":[{"id":null,"name":"Saved Messages"},{"id":500,"name":"Reports"},{"id":600,"name":"Other"},{"id":700,"name":"Unused"}],
-        "files": files}));
-
-    let get = |path: String| {
-        let request = client.get(format!("{url}{path}")).header("X-API-Key", key);
-        async move {
-            let response = request.send().await.unwrap();
-            let status = response.status().as_u16();
-            (status, response.json::<Value>().await.unwrap())
-        }
-    };
-
-    // Totals describe the whole match, and paging visits every file once.
-    let mut seen = std::collections::BTreeSet::new();
-    for page in 1..=3 {
-        let (status, body) =
-            get(format!("/api/v1/files?folder_id=500&limit=100&page={page}")).await;
-        assert_eq!(status, 200);
-        assert_eq!(body["total"], 230);
-        assert_eq!(body["complete"], true);
-        assert_eq!(body["pagination"]["total_pages"], 3);
-        assert_eq!(body["pagination"]["has_next"], page < 3);
-        assert_eq!(body["pagination"]["has_prev"], page > 1);
-        assert_eq!(body["data"], body["files"]);
-        for file in body["data"].as_array().unwrap() {
-            assert!(
-                seen.insert(file["id"].as_i64().unwrap()),
-                "a file appeared on two pages"
-            );
-        }
-    }
-    assert_eq!(seen.len(), 230);
-    assert_eq!((seen.first(), seen.last()), (Some(&1), Some(&230)));
-
-    // Timestamps are RFC 3339 and filter as instants, in any accepted form.
-    let (_, oldest) = get("/api/v1/files?folder_id=500&limit=1".into()).await;
-    assert_eq!(
-        oldest["data"][0],
-        json!({
-            "id": 1, "folder_id": 500, "name": "report-001.pdf", "size": 1001,
-            "mime_type": "application/pdf", "created_at": "2026-03-01T00:00:00Z", "encrypted": false,
-        })
-    );
-    for bounds in [
-        "created_after=2026-03-02T00:00:00Z&created_before=2026-03-02T23:00:00Z",
-        "created_after=2026-03-02&created_before=2026-03-02%2023:00:00%20UTC",
-        "created_after=1772409600&created_before=2026-03-02T23:59:59Z",
-    ] {
-        let (status, body) = get(format!("/api/v1/files?folder_id=500&{bounds}")).await;
-        assert_eq!(status, 200, "{bounds}");
-        assert_eq!(body["total"], 24, "{bounds}");
-    }
-
-    // Filters, ordering and field selection apply to the whole library.
-    let (_, largest) =
-        get("/api/v1/files?sort=size&order=desc&limit=2&fields=id,size".into()).await;
-    assert_eq!(largest["total"], 233);
-    assert_eq!(
-        largest["data"],
-        json!([{"id": 2, "size": 4096}, {"id": 230, "size": 1230}])
-    );
-    let (_, text) = get("/api/v1/files?mime_type=text&size_max=100".into()).await;
-    assert_eq!(text["total"], 1);
-    assert_eq!(text["data"][0]["folder_id"], Value::Null);
-    let (_, saved) = get("/api/v1/files?folder_id=null".into()).await;
-    assert_eq!(saved["total"], 1);
-    let (_, older) = get("/api/v1/files?folder_id=500&offset_id=11".into()).await;
-    assert_eq!(older["total"], 10);
-
-    // Search reads every file, not the newest few.
-    let (status, found) = get("/api/v1/files/search?q=REPORT-00".into()).await;
-    assert_eq!(status, 200);
-    assert_eq!(found.as_array().unwrap().len(), 9);
-    let (_, scoped) = get("/api/v1/files/search?q=copy&folder_id=600".into()).await;
-    assert_eq!(scoped.as_array().unwrap().len(), 1);
-    assert_eq!(scoped[0]["name"], "Renamed copy.pdf");
-
-    // Reports agree with the listing.
-    let (_, stats) = get("/api/v1/storage/stats".into()).await;
-    assert_eq!(stats["total_file_count"], 233);
-    let report_bytes: u64 = (1..=230).map(|index| 1000 + index).sum();
-    assert_eq!(
-        stats["total_storage_used_bytes"],
-        report_bytes + 1001 + 4096 + 12
-    );
-    assert_eq!(stats["complete"], true);
-    assert_eq!(
-        stats["folders"],
-        json!([
-            {"id": null, "name": "Saved Messages", "file_count": 1, "size_bytes": 12},
-            {"id": 500, "name": "Reports", "file_count": 230, "size_bytes": report_bytes},
-            {"id": 600, "name": "Other", "file_count": 2, "size_bytes": 5097},
-            {"id": 700, "name": "Unused", "file_count": 0, "size_bytes": 0},
-        ])
-    );
-    assert_eq!(
-        stats["mime_types"],
-        json!([
-            {"mime_type": "application/octet-stream", "file_count": 1, "size_bytes": 4096},
-            {"mime_type": "application/pdf", "file_count": 231, "size_bytes": report_bytes + 1001},
-            {"mime_type": "text/plain", "file_count": 1, "size_bytes": 12},
-        ])
-    );
-    let (_, duplicates) = get("/api/v1/storage/duplicates".into()).await;
-    assert_eq!(duplicates.as_array().unwrap().len(), 1);
-    assert_eq!(duplicates[0]["name"], "report-001.pdf");
-    assert_eq!(duplicates[0]["files"].as_array().unwrap().len(), 2);
-    let (_, empty) = get("/api/v1/folders/empty".into()).await;
-    assert_eq!(empty.as_array().unwrap().len(), 1);
-    assert_eq!(empty[0]["id"], 700);
-
-    // Another account never receives this library.
-    app.ok(json!({"command":"seed_account","owner":202}));
-    for path in [
-        "/api/v1/files?folder_id=500",
-        "/api/v1/files/search?q=report",
-        "/api/v1/storage/stats",
-        "/api/v1/storage/duplicates",
-        "/api/v1/folders/empty",
-    ] {
-        let (status, body) = get(path.into()).await;
-        assert_eq!(status, 503, "{path}");
-        assert_eq!(body["error"]["code"], "NOT_CONNECTED", "{path}");
-    }
-    app.stop();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5373,55 +5480,6 @@ fn video_frame_deadline_kills_and_reaps_the_extraction_child() {
     app.stop();
 }
 
-#[tokio::test]
-async fn rest_thumbnails_use_the_shared_decoder_cache_account_scope_and_protection_gate() {
-    let fixture = Fixture::new();
-    image::RgbImage::from_pixel(1024, 768, image::Rgb([20, 100, 180]))
-        .save(fixture.path("http-thumbnail.png"))
-        .unwrap();
-    let mut app = Backend::start(&fixture.0);
-    app.ok(json!({"command":"seed_account","owner":101}));
-    app.ok(json!({"command":"api_thumbnail_seed","owner":"101","source":"http-thumbnail.png"}));
-    let server = app.ok(json!({"command":"start_api","key":"thumbnail-journey"}));
-    let url = format!(
-        "{}/api/v1/files/1/thumbnail",
-        server["url"].as_str().unwrap()
-    );
-    let http = reqwest::Client::new();
-    let response = http
-        .get(&url)
-        .header("X-API-Key", "thumbnail-journey")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    assert_eq!(response.headers()["content-type"], "image/jpeg");
-    let bytes = response.bytes().await.unwrap();
-    assert_eq!(image::load_from_memory(&bytes).unwrap().width(), 480);
-    let second = http
-        .get(&url)
-        .header("X-API-Key", "thumbnail-journey")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(second.bytes().await.unwrap(), bytes);
-    app.ok(json!({"command":"seed_account","owner":202}));
-    app.ok(json!({"command":"api_thumbnail_seed","owner":"202","source":"http-thumbnail.png","protection":"encrypted_unlocked"}));
-    let denied = http
-        .get(&url)
-        .header("X-API-Key", "thumbnail-journey")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(denied.status(), 403);
-    assert!(fixture
-        .path("previews/workspace/202/thumbnails")
-        .read_dir()
-        .unwrap()
-        .next()
-        .is_none());
-    app.stop();
-}
 #[test]
 fn shared_preview_status_and_offline_listing_preserve_legacy_pins() {
     let fixture = Fixture::new();
@@ -5449,6 +5507,126 @@ fn shared_preview_status_and_offline_listing_preserve_legacy_pins() {
     assert_eq!(
         app.ok(json!({"command":"asset_offline_read","owner":"202"})),
         json!([])
+    );
+    app.stop();
+}
+
+#[test]
+fn asset_thumbnail_reads_decode_cache_and_refuse_cross_account_or_protected_sources() {
+    // `DynamicImage::dimensions` lives on the `GenericImageView` trait.
+    use image::GenericImageView as _;
+
+    let fixture = Fixture::new();
+    image::RgbImage::from_pixel(1024, 768, image::Rgb([20, 100, 180]))
+        .save(fixture.path("thumbnail-source.png"))
+        .unwrap();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let first = app.ok(json!({
+        "command":"asset_read", "owner":"101", "source":"thumbnail-source.png", "thumbnail":true
+    }));
+    let path = first["path"].as_str().unwrap().to_string();
+    let owner_101 = fixture.path("asset-cache/previews/workspace/101/thumbnails");
+    assert!(
+        std::fs::canonicalize(&path)
+            .expect("thumbnail file canonicalization")
+            .starts_with(
+                std::fs::canonicalize(&owner_101).expect("owner thumbnail dir canonicalization")
+            ),
+        "{path} is not under {}",
+        owner_101.display()
+    );
+    assert!(Path::new(&path).is_file(), "{path}");
+    let bytes = std::fs::read(&path).unwrap();
+    // The shared decoder produced a real JPEG thumbnail at the common 480x360 size.
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
+    assert_eq!(
+        image::load_from_memory(&bytes).unwrap().dimensions(),
+        (480, 360)
+    );
+    // A repeat read serves the same cached path and bytes without downloading again.
+    let second = app.ok(json!({
+        "command":"asset_read", "owner":"101", "source":"thumbnail-source.png", "thumbnail":true
+    }));
+    assert_eq!(second["path"], first["path"]);
+    assert_eq!(first["downloads"], 1, "the first read downloaded once");
+    assert_eq!(
+        second["downloads"], 1,
+        "a cache hit must not download again"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+    let private_202 = fixture.path("asset-cache/previews/workspace/202/thumbnails");
+    // Only a missing directory means nothing was published; any other read error
+    // is a real failure and every entry must be readable.
+    let published = |directory: &Path| -> usize {
+        match std::fs::read_dir(directory) {
+            Ok(entries) => entries
+                .inspect(|entry| {
+                    entry.as_ref().expect("thumbnail directory entry");
+                })
+                .count(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => panic!("thumbnail directory unreadable: {error}"),
+        }
+    };
+
+    app.ok(json!({"command":"seed_account","owner":202}));
+    // A fresh account cannot publish bytes the fixture labels as account 101's,
+    // even though the decode source itself is valid.
+    let wrong_owner = app.failure(json!({
+        "command":"asset_read", "owner":"202", "id":21,
+        "source":"thumbnail-source.png", "thumbnail":true, "sourceOwner":101
+    }));
+    assert!(wrong_owner.contains("ACCOUNT_CHANGED"), "{wrong_owner}");
+    assert_eq!(
+        published(&private_202),
+        0,
+        "wrong-owner refusal published a file"
+    );
+    // A protected, unlocked source is refused for the fresh account too.
+    let protected = app.failure(json!({
+        "command":"asset_read", "owner":"202", "id":22,
+        "source":"thumbnail-source.png", "thumbnail":true, "protection":"encrypted_unlocked"
+    }));
+    assert!(
+        protected.contains("ENCRYPTED_PREVIEW_UNAVAILABLE"),
+        "{protected}"
+    );
+    assert_eq!(
+        published(&private_202),
+        0,
+        "protected refusal published a file"
+    );
+    // The first account's cached bytes survive both refusals unchanged.
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+    // A plain, correctly owned thumbnail for the second account still works and
+    // publishes under the second account's private thumbnail directory.
+    let allowed = app.ok(json!({
+        "command":"asset_read", "owner":"202", "id":23,
+        "source":"thumbnail-source.png", "thumbnail":true
+    }));
+    let allowed_path = allowed["path"].as_str().unwrap().to_string();
+    assert!(
+        std::fs::canonicalize(&allowed_path)
+            .expect("allowed thumbnail canonicalization")
+            .starts_with(
+                std::fs::canonicalize(&private_202).expect("owner thumbnail dir canonicalization")
+            ),
+        "{allowed_path} is not under {}",
+        private_202.display()
+    );
+    assert!(
+        private_202.is_dir(),
+        "a successful 202 read must create its thumbnail directory"
+    );
+    let allowed_bytes = std::fs::read(&allowed_path).unwrap();
+    assert_eq!(
+        image::load_from_memory(&allowed_bytes)
+            .unwrap()
+            .dimensions(),
+        (480, 360)
     );
     app.stop();
 }
@@ -7164,7 +7342,7 @@ fn multipart_telegram_empty_messages_confirm_deletion_and_resume_after_restart()
     for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
         for fault in [None, Some("lost_reply_first"), Some("lost_reply_manifest")] {
             let fixture = Fixture::new();
-            fixture.write("private-video.mp4", &synthetic_bytes(1024 * 1024 + 19, 93));
+            fixture.write("private-video.mp4", synthetic_bytes(1024 * 1024 + 19, 93));
             let mut app = Backend::start(&fixture.0);
             app.ok(json!({"command":"seed_account","owner":101}));
             app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
@@ -7258,7 +7436,7 @@ fn multipart_telegram_deletion_preserves_changed_or_unconfirmed_targets() {
 fn notes_multipart_credentials_and_verified_moves_keep_the_same_note_after_restart() {
     for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
         let fixture = Fixture::new();
-        fixture.write("source.bin", &synthetic_bytes(1024 * 1024 + 19, 71));
+        fixture.write("source.bin", synthetic_bytes(1024 * 1024 + 19, 71));
         let mut app = Backend::start(&fixture.0);
         app.ok(json!({"command":"seed_account","owner":101}));
         app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
@@ -8209,7 +8387,7 @@ async fn retained_session_release_keeps_http_alive_and_fences_account_replacemen
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn release_partial_catalog_serves_rest_and_dav_without_pruning_known_older_files() {
+async fn release_partial_catalog_dav_listing_merges_without_pruning_known_older_files() {
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
@@ -8240,7 +8418,6 @@ async fn release_partial_catalog_serves_rest_and_dav_without_pruning_known_older
     let dav = app.ok(
         json!({"command":"start_webdav","token":token,"catalogFixture":true,"retainSession":true}),
     );
-    let api = app.ok(json!({"command":"start_api","key":"partial-catalog-key"}));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
@@ -8259,19 +8436,6 @@ async fn release_partial_catalog_serves_rest_and_dav_without_pruning_known_older
     assert_eq!(first.status(), 207);
     assert!(first.text().await.unwrap().contains("File%201.pdf"));
     app.ok(seed(2, 50001, false));
-    let response = client
-        .get(format!(
-            "{}/api/v1/files?per_page=100",
-            api["url"].as_str().unwrap()
-        ))
-        .header("X-API-Key", "partial-catalog-key")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["complete"], false);
-    assert_eq!(body["total"], 50000);
     let before = app.ok(json!({"command":"account_validation_status"}));
     let fallback_before = before["fallbackReads"].as_u64().unwrap();
     let validations_before = before["validations"].as_u64().unwrap();

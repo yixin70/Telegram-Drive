@@ -7,6 +7,13 @@
 - This build is intended for personal use. Existing settings, sessions, vaults, transfer queues, share links, folder mappings, and encrypted-file records remain compatible. There is no paid activation to preserve, so normal updates simply continue to work without any license or device allowance.
 - Verification: frontend type check, production build, i18n and bundle-budget scans, test-policy and Android-publication checks, and Rust compilation passed. Browser, native and release-tool E2E suites were exercised but are not fully green; final results and known failures are recorded in the implementation handoff. No lint script is configured. No production PayPal, Cloudflare, or D1 state is touched; rollback is a revert of this change set.
 
+### Retire the local REST API
+
+- Remove the optional loopback REST API (`http://127.0.0.1:8550/api/v1`): its server lifecycle, dedicated settings/key commands, registered operations, OpenAPI document and Settings/Share entry points, and retire its REST-only E2E journeys. Shared catalog, media/streaming, WebDAV, credential, inventory and search services are unchanged.
+- **Breaking change for external integrations:** existing scripts and tools that used the REST API stop working, and no replacement listener is served on the former address or paths (`/api/v1/health`, `/api/v1/openapi.json` or any protected operation). WebDAV remains the supported local file-access integration, but it is not a drop-in or semantic replacement for REST search, bulk/ZIP, reporting or media-metadata endpoints. See the [REST API retirement notice](REST_API_Documentation.md).
+- Keep the retained `api_settings.json` inert: current builds start no REST listener and register none of the retired commands, and no settings, session, vault, folder or database migration is performed. Reinstalling or rolling back to an older REST-capable build may honor its stored setting and start the server again.
+- Verification: existing shared WebDAV, media, inventory, search and vault regressions are retained, and REST-only journeys are retired rather than reimplemented. Legacy-enabled-profile startup/absence acceptance, full regression suites and platform/device gates remain release requirements; their execution results are reported with the change set rather than recorded here.
+
 ## [4.1.2] - 2026-10-14
 
 ### Desktop video streaming metadata

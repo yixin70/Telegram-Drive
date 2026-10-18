@@ -133,20 +133,22 @@ test('the encryption explanation localizes safety details and returns focus with
 });
 
 
-test('local access explanations localize credential and encryption boundaries without enabling a server',async({page})=>{
+test('WebDAV access explanation localizes credential and encryption boundaries without enabling a server',async({page})=>{
  const es=JSON.parse(await readFile(new URL('../../src/i18n/locales/es.json',import.meta.url),'utf8'));
  await desktopFixture(page,{settings:{language:'es'}});await page.goto('/?a11y-fixture=tv-control');const outside=page.getByRole('button',{name:'Open settings',exact:true});await outside.click();
- const settings=page.getByRole('dialog');await settings.getByRole('button',{name:es.settings.tab_advanced,exact:true}).click();await settings.getByRole('button',{name:/^REST API/}).click();const opener=settings.getByRole('button',{name:es.access_copy?.rest_open ?? 'Understand REST permissions',exact:true});await opener.click();
- const explanation=page.getByRole('dialog',{name:'Cómo funciona el acceso REST',exact:true});await expect(explanation).toBeVisible();
- await expect(explanation).toContainText('Cada solicitud debe incluir la clave de API generada.');
- await expect(explanation).toContainText('el acceso local no evita el cifrado.');
+ const settings=page.getByRole('dialog');await settings.getByRole('button',{name:es.settings.tab_advanced,exact:true}).click();await settings.getByRole('button',{name:/^WebDAV/}).click();
+ const opener=settings.getByRole('button',{name:es.access_copy.webdav_open,exact:true});await opener.click();
+ const explanation=page.getByRole('dialog',{name:es.access_copy.webdav_title,exact:true});await expect(explanation).toBeVisible();
+ await expect(explanation).toContainText(es.access_copy.webdav_token);
+ await expect(explanation).toContainText(es.access_copy.protection_warning);
  await page.keyboard.press('Escape');await expect(explanation).toHaveCount(0);await expect(opener).toBeFocused();await page.keyboard.press('Tab');expect(await settings.evaluate(element=>element.contains(document.activeElement))).toBe(true);
  await settings.getByRole('button',{name:es.settings.tab_advanced,exact:true}).click();await settings.getByRole('button',{name:/^WebDAV/}).click();
- await settings.getByRole('button',{name:es.access_copy?.webdav_open ?? 'Understand WebDAV permissions',exact:true}).click();
- const dav=page.getByRole('dialog',{name:'Cómo funciona el acceso WebDAV',exact:true});await expect(dav).toBeVisible();
- await expect(dav).toContainText('/dav/<token>/');await expect(dav).toContainText('El acceso como invitado o anónimo sin ese token no está permitido.');
+ await settings.getByRole('button',{name:es.access_copy.webdav_open,exact:true}).click();
+ const dav=page.getByRole('dialog',{name:es.access_copy.webdav_title,exact:true});await expect(dav).toBeVisible();
+ await expect(dav).toContainText('/dav/<token>/');await expect(dav).toContainText(es.access_copy.webdav_changes);
  await dav.getByRole('button',{name:es.ui_copy.understood,exact:true}).click();await expect(dav).toHaveCount(0);await page.keyboard.press('Escape');await expect(settings).toHaveCount(0);await expect(outside).toBeFocused();
- expect(await nativeCalls(page,'cmd_set_api_settings')).toHaveLength(0);expect(await nativeCalls(page,'cmd_set_webdav_settings')).toHaveLength(0);
+ expect(await nativeCalls(page,'cmd_update_webdav_settings')).toHaveLength(0);
+ expect(await nativeCalls(page,'cmd_get_api_settings')).toHaveLength(0);expect(await nativeCalls(page,'cmd_update_api_settings')).toHaveLength(0);expect(await nativeCalls(page,'cmd_regenerate_api_key')).toHaveLength(0);
 });
 
 

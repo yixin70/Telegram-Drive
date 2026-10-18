@@ -91,7 +91,7 @@ Local-file upload/download is the supported initial journey. URL/temp-file impor
 that reach the common upload implementation use the same transport; their existing
 download/import size limits still apply. Archive upload retains its existing input
 limits. Folder Sync rejects oversized uploads and skips multipart remote entries.
-REST and WebDAV listing intentionally omit these containers; raw serving,
+WebDAV listing intentionally omits these containers; raw serving,
 transcoding/remux, archive extraction/download, sharing, offline-pack reads and
 unsupported mutations reject them instead of returning manifest or piece bytes.
 Android multipart download publication is explicitly unsupported

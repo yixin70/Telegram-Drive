@@ -41,10 +41,10 @@ async fn resolve(
     client: &Client,
     crypto: &CryptoState,
     location: &Location,
-    message: &Message,
-    peer: Peer,
+    remote: (&Peer, &Message),
     secret: Option<&SecretBytes>,
 ) -> Result<(String, Option<Vec<u8>>)> {
+    let (peer, message) = remote;
     let alias = location.alias()?;
     account.validate()?;
     let (fingerprint, header) = if crate::multipart::is_manifest(message.text()) {
@@ -53,7 +53,7 @@ async fn resolve(
             app,
             account.clone(),
             client.clone(),
-            peer,
+            peer.clone(),
             location.folder_id,
             crypto,
             credential.as_ref().map(|(session, _)| *session),
@@ -195,7 +195,7 @@ pub async fn cmd_file_notes(
         let alias = location.alias()?;
         let result: Result<Value> = async {
             let (peer, message) = remote.get(&(location.folder_id, location.message_id)).ok_or("NOTES_MISSING")?;
-            let (identity, header) = resolve(&app, &account, &client, &crypto, &location, message, peer.clone(), secret.as_ref()).await?;
+            let (identity, header) = resolve(&app, &account, &client, &crypto, &location, (peer, message), secret.as_ref()).await?;
             if let Some(header) = header {
                 // Plain save/delete requests cannot downgrade an encrypted file.
                 if matches!(action.as_str(), "save" | "delete") { return Err("NOTES_LOCKED".into()); }
