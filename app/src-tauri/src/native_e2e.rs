@@ -70,7 +70,7 @@ struct MultipartFixture {
     stop_on_progress: Option<String>,
     stopped: std::sync::atomic::AtomicBool,
     progress: std::sync::Mutex<Vec<(u64, u64)>>,
-    download_progress: std::sync::Mutex<Vec<Value>>,
+    transfer_progress: std::sync::Mutex<Vec<Value>>,
     telegram_delete: bool,
     delete_fault: Option<String>,
 }
@@ -132,15 +132,15 @@ impl crate::multipart::Transport for MultipartFixture {
             }
         }
     }
-    fn download_progress(&self, bytes: u64, total: u64, speed: u64) {
+    fn transfer_progress(&self, bytes: u64, total: u64, speed: u64) {
         self.progress(bytes, total);
-        self.download_progress.lock().unwrap().push(json!({
+        self.transfer_progress.lock().unwrap().push(json!({
             "uploaded_bytes":bytes,"total_bytes":total,"speed_bytes_per_sec":speed
         }));
     }
     async fn put(
         &self,
-        mut reader: crate::multipart::Reader,
+        reader: crate::multipart::Reader,
         size: u64,
         name: &str,
         caption: &str,
@@ -157,6 +157,14 @@ impl crate::multipart::Transport for MultipartFixture {
         }
         // Consume even an idempotent retry to exercise source/envelope hashing.
         let existing = self.find(caption).await?;
+        let mut reader = crate::traffic::Reader::new(
+            reader,
+            crate::traffic::Traffic {
+                account: self.account.clone(),
+                network: self.network.clone(),
+                direction: crate::traffic::Direction::Upload,
+            },
+        );
         let directory = self.directory()?;
         let id = self.documents()?.last().map_or(1, |r| r.id + 1);
         let path = directory.join(format!("{id}.partial"));
@@ -585,7 +593,7 @@ async fn fixture_media(
             stopped: Default::default(),
             progress: Default::default(),
             network: fixture.network.clone(),
-            download_progress: Default::default(),
+            transfer_progress: Default::default(),
             telegram_delete: false,
             delete_fault: None,
         };
@@ -5593,7 +5601,7 @@ impl Driver {
             stopped: Default::default(),
             progress: Default::default(),
             network: self.network.clone(),
-            download_progress: Default::default(),
+            transfer_progress: Default::default(),
             telegram_delete: request["telegramDelete"].as_bool().unwrap_or(false),
             delete_fault: request["deleteFault"].as_str().map(str::to_string),
         };
@@ -5638,7 +5646,9 @@ impl Driver {
                 )
                 .await?;
                 Ok(
-                    json!({"message":result.message,"parts":result.parts,"resumed":result.resumed,"progress":*transport.progress.lock().unwrap()}),
+                    json!({"message":result.message,"parts":result.parts,"resumed":result.resumed,
+                        "progress":*transport.progress.lock().unwrap(),
+                        "rateProgress":*transport.transfer_progress.lock().unwrap()}),
                 )
             }
             "multipart_policy" => Ok(json!({
@@ -5661,7 +5671,7 @@ impl Driver {
                 )
                 .await?;
                 let mut result = json!(result);
-                result["progress"] = json!(*transport.download_progress.lock().unwrap());
+                result["progress"] = json!(*transport.transfer_progress.lock().unwrap());
                 Ok(result)
             }
             "multipart_inspect" => Ok(json!(
@@ -5701,7 +5711,7 @@ impl Driver {
                     stopped: Default::default(),
                     progress: Default::default(),
                     network: self.network.clone(),
-                    download_progress: Default::default(),
+                    transfer_progress: Default::default(),
                     telegram_delete: transport.telegram_delete,
                     delete_fault: transport.delete_fault.clone(),
                 };

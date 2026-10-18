@@ -59,9 +59,9 @@ pub(crate) trait Transport: Sync {
     fn bandwidth(&self) -> Arc<BandwidthManager>;
     fn check(&self) -> Result<()>;
     fn progress(&self, _bytes: u64, _total: u64) {}
-    // Logical bytes remain verified plaintext; rate measures received transport
+    // Logical bytes track plaintext; rate measures consumed transport
     // bytes, including TDENC2 overhead. Completion reports a zero network rate.
-    fn download_progress(&self, bytes: u64, total: u64, _speed: u64) {
+    fn transfer_progress(&self, bytes: u64, total: u64, _speed: u64) {
         self.progress(bytes, total);
     }
     fn put(
@@ -728,7 +728,7 @@ pub(crate) async fn upload<T: Transport>(
             .filter(|n| *n <= length)
             .ok_or_else(|| err("Recovery length overflow"))?;
     }
-    transport.progress(offset.min(length - 1), length);
+    transport.transfer_progress(offset.min(length - 1), length, 0);
     // Hash the plaintext actually consumed by the upload as well as the source
     // before/after it. On platforms without a mandatory write-denying lease, a
     // concurrent edit followed by a revert must not commit an invalid collection.
@@ -825,6 +825,9 @@ pub(crate) async fn upload<T: Transport>(
             envelope_header.as_deref(),
         );
         tokio::pin!(pending);
+        // Each piece has its own reader counter. Do not count recovered pieces
+        // or the logical plaintext offset as newly transferred network bytes.
+        let mut upload_rate = crate::transfer_rate::TransferRate::new();
         let mut ticks = tokio::time::interval(std::time::Duration::from_millis(200));
         let remote = loop {
             tokio::select! {
@@ -832,7 +835,11 @@ pub(crate) async fn upload<T: Transport>(
                 _ = ticks.tick() => {
                     transport.check()?;
                     let done = consumed.load(Ordering::Relaxed).min(bytes);
-                    transport.progress((offset + done.saturating_mul(size) / bytes).min(length - 1), length);
+                    transport.transfer_progress(
+                        (offset + done.saturating_mul(size) / bytes).min(length - 1),
+                        length,
+                        upload_rate.record(done),
+                    );
                 }
             }
         };
@@ -860,7 +867,7 @@ pub(crate) async fn upload<T: Transport>(
         journal.pending_header = None;
         save_journal(transport, &key, &journal, credentials).await?;
         offset += size;
-        transport.progress(offset.min(length - 1), length);
+        transport.transfer_progress(offset.min(length - 1), length, 0);
     }
     let uploaded_plaintext = hex::encode(
         plaintext_digest
@@ -946,7 +953,7 @@ pub(crate) async fn upload<T: Transport>(
     }
     journal.committed = Some(remote.clone());
     save_journal(transport, &key, &journal, credentials).await?;
-    transport.progress(length, length);
+    transport.transfer_progress(length, length, 0);
     Ok(Uploaded {
         message: remote.id,
         parts: count as usize,
@@ -1187,7 +1194,7 @@ pub(crate) async fn download<T: Transport>(
             whole.update(&plaintext);
             file.write_all(&plaintext).await.map_err(err)?;
             plaintext.zeroize();
-            transport.download_progress(
+            transport.transfer_progress(
                 (total + written).min(manifest.length - 1),
                 manifest.length,
                 speed,
@@ -1227,6 +1234,6 @@ pub(crate) async fn download<T: Transport>(
     )
     .await?;
     cleanup.disarm();
-    transport.download_progress(manifest.length, manifest.length, 0);
+    transport.transfer_progress(manifest.length, manifest.length, 0);
     Ok(publication)
 }

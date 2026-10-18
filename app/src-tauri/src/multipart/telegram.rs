@@ -242,9 +242,9 @@ impl Transport for Telegram<'_> {
         Ok(())
     }
     fn progress(&self, bytes: u64, total: u64) {
-        self.download_progress(bytes, total, 0);
+        self.transfer_progress(bytes, total, 0);
     }
-    fn download_progress(&self, bytes: u64, total: u64, speed: u64) {
+    fn transfer_progress(&self, bytes: u64, total: u64, speed: u64) {
         self.total.store(total, Ordering::Relaxed);
         if let Some(app) = &self.app {
             if !self.transfer.is_empty() {

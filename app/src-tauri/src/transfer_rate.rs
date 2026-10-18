@@ -1,4 +1,4 @@
-//! Per-operation receive rate. Feed cumulative transport bytes, not plaintext:
+//! Per-operation transfer rate. Feed cumulative transport bytes, not plaintext:
 //! authenticated decryption can buffer a whole record before progress advances.
 use std::time::{Duration, Instant};
 
@@ -17,21 +17,21 @@ impl TransferRate {
         }
     }
 
-    pub(crate) fn record(&mut self, received: u64) -> u64 {
+    pub(crate) fn record(&mut self, transferred: u64) -> u64 {
         let now = Instant::now();
-        if received < self.sampled_bytes {
+        if transferred < self.sampled_bytes {
             // A restarted operation must not inherit another attempt's rate.
             self.sampled_at = now;
-            self.sampled_bytes = received;
+            self.sampled_bytes = transferred;
             self.speed = 0;
             return 0;
         }
         let elapsed = now.duration_since(self.sampled_at);
-        let delta = received - self.sampled_bytes;
+        let delta = transferred - self.sampled_bytes;
         if elapsed >= Duration::from_millis(250) || (self.speed == 0 && delta > 0) {
             self.speed = (delta as f64 / elapsed.as_secs_f64().max(f64::EPSILON)) as u64;
             self.sampled_at = now;
-            self.sampled_bytes = received;
+            self.sampled_bytes = transferred;
         }
         self.speed
     }

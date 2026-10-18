@@ -1369,6 +1369,62 @@ fn interrupted_download_persists_progress_and_requires_review_before_resume() {
 }
 
 #[test]
+fn multipart_upload_reports_live_byte_rates_across_pieces_in_every_protection_mode() {
+    let fixture = Fixture::new();
+    let content: Vec<u8> = (0..2_700_123).map(|n| (n % 251) as u8).collect();
+    fixture.write("upload-speed-source.bin", &content);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"fixture vault passphrase"}));
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        app.ok(json!({"command":"traffic_configure","upKbs":2048,"bandwidth_schedule":true}));
+        let uploaded = app.ok(json!({
+            "command":"multipart_upload","source":"upload-speed-source.bin",
+            "mode":mode,"filePassphrase":"fixture file passphrase","objectLimit":1_400_000
+        }));
+        assert!(uploaded["parts"].as_u64().unwrap() > 1);
+        let progress = uploaded["rateProgress"].as_array().unwrap();
+        let moving: Vec<_> = progress
+            .iter()
+            .filter(|p| p["speed_bytes_per_sec"].as_u64().unwrap() > 0)
+            .collect();
+        assert!(
+            moving.iter().any(|p| {
+                let bytes = p["uploaded_bytes"].as_u64().unwrap();
+                bytes > 0 && bytes < 1_400_000
+            }),
+            "{mode} upload advanced but did not report a live first-piece rate: {progress:?}"
+        );
+        assert!(
+            moving.iter().any(|p| {
+                let bytes = p["uploaded_bytes"].as_u64().unwrap();
+                bytes > 1_400_000 && bytes < content.len() as u64
+            }),
+            "{mode} upload lost its rate after the piece boundary: {progress:?}"
+        );
+        assert!(progress.windows(2).all(|pair| {
+            pair[0]["uploaded_bytes"].as_u64().unwrap()
+                <= pair[1]["uploaded_bytes"].as_u64().unwrap()
+        }));
+        assert!(progress
+            .iter()
+            .all(|p| p["total_bytes"] == content.len() as u64));
+        assert_eq!(
+            progress.last().unwrap()["uploaded_bytes"],
+            content.len() as u64
+        );
+        assert_eq!(progress.last().unwrap()["speed_bytes_per_sec"], 0);
+        app.ok(json!({"command":"traffic_configure","upKbs":0}));
+        app.ok(
+            json!({"command":"multipart_download","message":uploaded["message"],
+            "destination":"upload-speed-restored.bin","filePassphrase":"fixture file passphrase"}),
+        );
+        assert_eq!(fixture.read("upload-speed-restored.bin"), content);
+    }
+    app.stop();
+}
+
+#[test]
 fn multipart_download_reports_received_byte_rates_before_decryption_and_across_pieces() {
     let fixture = Fixture::new();
     let content: Vec<u8> = (0..2_700_123).map(|n| (n % 251) as u8).collect();
@@ -1376,16 +1432,16 @@ fn multipart_download_reports_received_byte_rates_before_decryption_and_across_p
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"fixture vault passphrase"}));
-    for mode in ["vault", "standard"] {
+    for mode in ["vault", "standard", "passphrase", "vault_and_passphrase"] {
         let uploaded = app.ok(
             json!({"command":"multipart_upload","source":"speed-source.bin",
-            "mode":mode,"objectLimit":1_400_000}),
+            "mode":mode,"filePassphrase":"fixture file passphrase","objectLimit":1_400_000}),
         );
         assert!(uploaded["parts"].as_u64().unwrap() > 1);
         app.ok(json!({"command":"traffic_configure","downKbs":2048}));
         let result = app.ok(
             json!({"command":"multipart_download","message":uploaded["message"],
-            "destination":"speed-restored.bin"}),
+            "destination":"speed-restored.bin","filePassphrase":"fixture file passphrase"}),
         );
         assert_eq!(fixture.read("speed-restored.bin"), content);
         let progress = result["progress"].as_array().unwrap();
