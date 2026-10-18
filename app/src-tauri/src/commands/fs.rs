@@ -3528,20 +3528,21 @@ pub async fn cmd_delete_file(
     account.validate_client(&client).await?;
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
     account.validate()?;
-    let messages = client
+    let message = client
         .get_messages_by_id(&peer, &[message_id])
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .flatten()
+        .find(crate::multipart::telegram::is_present);
     let pending_delete =
         crate::multipart::operations::pending_delete(&account, folder_id, message_id)?;
-    if messages.iter().flatten().next().is_none() && !pending_delete {
+    if message.is_none() && !pending_delete {
         return Err("The file was not found; refresh the folder".into());
     }
     if pending_delete
-        || messages
-            .iter()
-            .flatten()
-            .next()
+        || message
+            .as_ref()
             .is_some_and(|message| crate::multipart::is_manifest(message.text()))
     {
         let crypto = app.state::<crate::crypto::state::CryptoState>();
@@ -3565,7 +3566,7 @@ pub async fn cmd_delete_file(
             passphrase: secret.as_ref(),
         };
         if secret.is_none()
-            && messages.iter().flatten().next().is_some()
+            && message.is_some()
             && crate::multipart::protection(&transport, message_id)
                 .await?
                 .contains("passphrase")
@@ -3576,7 +3577,7 @@ pub async fn cmd_delete_file(
             crate::multipart::operations::delete(&transport, message_id, folder_id, &credentials)
                 .await
         {
-            if pending_delete && secret.is_none() && messages.iter().flatten().next().is_none() {
+            if pending_delete && secret.is_none() && message.is_none() {
                 return Err(format!("[MULTIPART_PASSPHRASE_REQUIRED] Unlock the pending deletion before retrying: {error}"));
             }
             return Err(error);
@@ -3584,7 +3585,7 @@ pub async fn cmd_delete_file(
         crate::file_inventory::changed(&account, folder_id, &[message_id])?;
         return Ok(true);
     }
-    if let Some(message) = messages.iter().flatten().next() {
+    if let Some(message) = message.as_ref() {
         if let Some(media) = message.media() {
             crate::multipart::reject_media(message.text(), &media)?;
         }

@@ -6853,6 +6853,101 @@ fn multipart_full_set_moves_and_interrupted_deletes_recover_in_every_mode() {
 }
 
 #[test]
+fn multipart_telegram_empty_messages_confirm_deletion_and_resume_after_restart() {
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        for fault in [None, Some("lost_reply_first"), Some("lost_reply_manifest")] {
+            let fixture = Fixture::new();
+            fixture.write("private-video.mp4", &synthetic_bytes(1024 * 1024 + 19, 93));
+            let mut app = Backend::start(&fixture.0);
+            app.ok(json!({"command":"seed_account","owner":101}));
+            app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+            let upload = app.ok(
+                json!({"command":"multipart_upload","source":"private-video.mp4",
+                "mode":mode,"filePassphrase":"fixture file password","objectLimit":1048576}),
+            );
+            let deletion = json!({"command":"multipart_delete","message":upload["message"],
+                "filePassphrase":"fixture file password","telegramDelete":true});
+            if let Some(fault) = fault {
+                let mut interrupted = deletion.clone();
+                interrupted["deleteFault"] = json!(fault);
+                assert!(
+                    app.failure(interrupted)
+                        .contains("fixture deletion reply lost"),
+                    "{mode}/{fault}"
+                );
+                let pending =
+                    app.ok(json!({"command":"multipart_remote","message":upload["message"]}));
+                assert_eq!(pending["pendingDelete"], true);
+                if fault == "lost_reply_manifest" {
+                    assert!(pending["documents"].as_array().unwrap().is_empty());
+                }
+                app.stop();
+                app = Backend::start(&fixture.0);
+                app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+                if mode != "standard" {
+                    app.ok(json!({"command":"vault_lock"}));
+                    let mut wrong = deletion.clone();
+                    wrong["filePassphrase"] = json!("wrong password");
+                    assert!(!app.failure(wrong).is_empty());
+                    app.ok(json!({"command":"vault_unlock","passphrase":"fixture vault password"}));
+                }
+            }
+            app.ok(deletion);
+            let remaining =
+                app.ok(json!({"command":"multipart_remote","message":upload["message"]}));
+            assert!(
+                remaining["documents"].as_array().unwrap().is_empty(),
+                "{mode}/{fault:?}"
+            );
+            assert_eq!(remaining["pendingDelete"], false);
+            app.stop();
+        }
+    }
+}
+
+#[test]
+fn multipart_telegram_deletion_preserves_changed_or_unconfirmed_targets() {
+    for fault in ["changed_document", "text", "unconfirmed", "lookup_error"] {
+        let fixture = Fixture::new();
+        let bytes = synthetic_bytes(1024 * 1024 + 19, 93);
+        fixture.write("private-video.mp4", &bytes);
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"fixture vault password"}));
+        let upload = app.ok(
+            json!({"command":"multipart_upload","source":"private-video.mp4",
+            "mode":"vault","objectLimit":1048576}),
+        );
+        let before = app.ok(json!({"command":"multipart_remote"}));
+        let failure = app.failure(
+            json!({"command":"multipart_delete","message":upload["message"],
+            "telegramDelete":true,"deleteFault":fault}),
+        );
+        let expected = match fault {
+            "changed_document" => "Deletion target changed",
+            "text" => "not a document",
+            "unconfirmed" => "did not confirm",
+            _ => "fixture lookup failed",
+        };
+        assert!(failure.contains(expected), "{fault}: {failure}");
+        let after = app.ok(json!({"command":"multipart_remote","message":upload["message"]}));
+        assert_eq!(after["documents"], before["documents"]);
+        assert_eq!(after["pendingDelete"], true);
+        app.ok(json!({"command":"multipart_download","message":upload["message"],"destination":"retained.mp4"}));
+        assert_eq!(fixture.read("retained.mp4"), bytes);
+        app.ok(
+            json!({"command":"multipart_delete","message":upload["message"],"telegramDelete":true}),
+        );
+        assert_eq!(
+            app.ok(json!({"command":"multipart_remote","message":upload["message"]}))
+                ["pendingDelete"],
+            false
+        );
+        app.stop();
+    }
+}
+
+#[test]
 fn notes_multipart_credentials_and_verified_moves_keep_the_same_note_after_restart() {
     for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
         let fixture = Fixture::new();

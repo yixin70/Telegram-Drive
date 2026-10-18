@@ -45,6 +45,71 @@ pub(crate) fn remote(message: &Message) -> Result<Remote> {
     }
 }
 
+pub(crate) fn is_present(message: &Message) -> bool {
+    // grammers can return Some(Message::Empty) for a deleted ID. Other
+    // non-document messages are real objects, not proof of deletion.
+    !matches!(&message.raw, tl::enums::Message::Empty(_))
+}
+
+/// The remote RPC boundary, shared with controlled native process journeys.
+pub(crate) trait DeletionSource: Sync {
+    fn check_delete(&self) -> Result<()>;
+    fn deletion_message(
+        &self,
+        id: i32,
+    ) -> impl std::future::Future<Output = Result<Option<Message>>> + Send;
+    fn delete_message(&self, id: i32) -> impl std::future::Future<Output = Result<()>> + Send;
+}
+
+pub(crate) async fn remove_verified(source: &impl DeletionSource, expected: &Remote) -> Result<()> {
+    source.check_delete()?;
+    if let Some(message) = source
+        .deletion_message(expected.id)
+        .await?
+        .filter(is_present)
+    {
+        if remote(&message)? != *expected {
+            return Err(err(
+                "Deletion target changed; no unrelated document was removed",
+            ));
+        }
+        source.check_delete()?;
+        source.delete_message(expected.id).await?;
+        if source
+            .deletion_message(expected.id)
+            .await?
+            .filter(is_present)
+            .is_some()
+        {
+            return Err(err(
+                "Telegram did not confirm document deletion; retry cleanup",
+            ));
+        }
+    }
+    source.check_delete()
+}
+
+impl DeletionSource for Telegram<'_> {
+    fn check_delete(&self) -> Result<()> {
+        self.check()
+    }
+    async fn deletion_message(&self, id: i32) -> Result<Option<Message>> {
+        self.account.validate_client(&self.client).await?;
+        self.client
+            .get_messages_by_id(&self.peer, &[id])
+            .await
+            .map(|messages| messages.into_iter().flatten().next())
+            .map_err(err)
+    }
+    async fn delete_message(&self, id: i32) -> Result<()> {
+        self.client
+            .delete_messages(&self.peer, &[id])
+            .await
+            .map(|_| ())
+            .map_err(err)
+    }
+}
+
 impl Telegram<'_> {
     fn traffic(&self, direction: Direction) -> Traffic {
         Traffic {
@@ -117,7 +182,7 @@ impl Telegram<'_> {
             .map_err(err)?
             .into_iter()
             .flatten()
-            .next()
+            .find(is_present)
             .ok_or_else(|| err("A multipart document is missing"))?;
         self.check()?;
         Ok(message)
@@ -280,40 +345,7 @@ impl Transport for Telegram<'_> {
         .await
     }
     async fn remove(&self, expected: &Remote) -> Result<()> {
-        self.check()?;
-        self.account.validate_client(&self.client).await?;
-        let messages = self
-            .client
-            .get_messages_by_id(&self.peer, &[expected.id])
-            .await
-            .map_err(err)?;
-        if let Some(message) = messages.into_iter().flatten().next() {
-            if remote(&message)? != *expected {
-                return Err(err(
-                    "Deletion target changed; no unrelated document was removed",
-                ));
-            }
-            self.check()?;
-            self.client
-                .delete_messages(&self.peer, &[expected.id])
-                .await
-                .map_err(err)?;
-            if self
-                .client
-                .get_messages_by_id(&self.peer, &[expected.id])
-                .await
-                .map_err(err)?
-                .into_iter()
-                .flatten()
-                .next()
-                .is_some()
-            {
-                return Err(err(
-                    "Telegram did not confirm document deletion; retry cleanup",
-                ));
-            }
-        }
-        self.check()
+        remove_verified(self, expected).await
     }
     async fn copy_from(&self, source: &Self, expected: &Remote, key: &str) -> Result<Remote> {
         source.check()?;
@@ -380,7 +412,7 @@ impl Transport for Telegram<'_> {
             .map_err(crate::commands::utils::map_error)?
             .into_iter()
             .flatten()
-            .next();
+            .find(is_present);
         self.check()?;
         message.as_ref().map(remote).transpose()
     }

@@ -1,5 +1,16 @@
 # End-to-end testing
 
+## Multipart deletion retries
+
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e multipart_telegram_ -- --test-threads=1`
+drives whole-set deletion, sealed SQLite checkpoints and child-process restart in
+all four protection modes. The controlled RPC boundary returns real SDK messages,
+including Telegram's explicit `Message::Empty` placeholder after removal. Journeys
+cover immediate confirmation, lost replies while deleting a piece or the manifest,
+credential refusal, changed documents, text-only replacements, unconfirmed deletion
+and lookup failures. They do not sign in, touch personal files, or establish live
+Telegram/installed-app acceptance.
+
 ## Local video notes
 
 `npx playwright test tests/e2e/file-notes.spec.ts --workers=1` from `app/` exercises

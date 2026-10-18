@@ -71,6 +71,8 @@ struct MultipartFixture {
     stopped: std::sync::atomic::AtomicBool,
     progress: std::sync::Mutex<Vec<(u64, u64)>>,
     download_progress: std::sync::Mutex<Vec<Value>>,
+    telegram_delete: bool,
+    delete_fault: Option<String>,
 }
 
 impl MultipartFixture {
@@ -263,27 +265,10 @@ impl crate::multipart::Transport for MultipartFixture {
         Ok(found.into_iter().next())
     }
     async fn remove(&self, remote: &crate::multipart::Remote) -> Result<(), String> {
-        self.check()?;
-        if self
-            .fail_after
-            .is_some_and(|limit| self.saved.load(std::sync::atomic::Ordering::SeqCst) >= limit)
-        {
-            return Err("fixture interruption".into());
+        if self.telegram_delete {
+            return crate::multipart::telegram::remove_verified(self, remote).await;
         }
-        if let Some(actual) = self.documents()?.into_iter().find(|r| r.id == remote.id) {
-            if actual != *remote {
-                return Err("Fixture deletion identity changed".into());
-            }
-            let directory = self.directory()?;
-            match std::fs::remove_file(directory.join(format!("{}.bin", remote.id))) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.to_string()),
-            }
-            std::fs::remove_file(directory.join(format!("{}.json", remote.id))).map_err(error)?;
-            self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
-        Ok(())
+        self.remove_fixture_document(remote).await
     }
     async fn copy_from(
         &self,
@@ -318,6 +303,100 @@ impl crate::multipart::Transport for MultipartFixture {
         .map_err(error)?;
         self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(copied)
+    }
+}
+
+impl MultipartFixture {
+    async fn remove_fixture_document(
+        &self,
+        remote: &crate::multipart::Remote,
+    ) -> Result<(), String> {
+        use crate::multipart::Transport;
+        self.check()?;
+        if self
+            .fail_after
+            .is_some_and(|limit| self.saved.load(std::sync::atomic::Ordering::SeqCst) >= limit)
+        {
+            return Err("fixture interruption".into());
+        }
+        if let Some(actual) = self.documents()?.into_iter().find(|r| r.id == remote.id) {
+            if actual != *remote {
+                return Err("Fixture deletion identity changed".into());
+            }
+            let directory = self.directory()?;
+            match std::fs::remove_file(directory.join(format!("{}.bin", remote.id))) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            std::fs::remove_file(directory.join(format!("{}.json", remote.id))).map_err(error)?;
+            self.saved.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(())
+    }
+}
+
+impl crate::multipart::telegram::DeletionSource for MultipartFixture {
+    fn check_delete(&self) -> Result<(), String> {
+        crate::multipart::Transport::check(self)
+    }
+    async fn deletion_message(
+        &self,
+        id: i32,
+    ) -> Result<Option<grammers_client::types::Message>, String> {
+        use grammers_client::types::{Message, PeerMap};
+        use grammers_tl_types as tl;
+        if self.delete_fault.as_deref() == Some("lookup_error") {
+            return Err("fixture lookup failed".into());
+        }
+        let raw = match self.documents()?.into_iter().find(|remote| remote.id == id) {
+            Some(remote) => {
+                let mut raw = raw_inventory_row(&json!({
+                    "id":remote.id,"documentId":remote.document,"size":remote.size,
+                    "name":remote.name,"caption":remote.caption
+                }))
+                .0;
+                if let tl::enums::Message::Message(message) = &mut raw {
+                    match self.delete_fault.as_deref() {
+                        Some("changed_document") => message.message.push_str(" changed"),
+                        Some("text") => message.media = None,
+                        _ => (),
+                    }
+                }
+                raw
+            }
+            None => tl::types::MessageEmpty { id, peer_id: None }.into(),
+        };
+        // No runner is started: all RPCs are replaced by fixture-owned disk I/O.
+        let pool = grammers_mtsender::SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let client = grammers_client::Client::new(&pool);
+        Ok(Some(Message::from_raw(
+            &client,
+            raw,
+            None,
+            &PeerMap::empty(),
+        )))
+    }
+    async fn delete_message(&self, id: i32) -> Result<(), String> {
+        let remote = self
+            .documents()?
+            .into_iter()
+            .find(|remote| remote.id == id)
+            .ok_or("Fixture deletion target missing")?;
+        if self.delete_fault.as_deref() == Some("unconfirmed") {
+            return Ok(());
+        }
+        self.remove_fixture_document(&remote).await?;
+        if self.delete_fault.as_deref() == Some("lost_reply_first")
+            || (self.delete_fault.as_deref() == Some("lost_reply_manifest")
+                && crate::multipart::is_manifest(&remote.caption))
+        {
+            return Err("fixture deletion reply lost".into());
+        }
+        Ok(())
     }
 }
 
@@ -507,6 +586,8 @@ async fn fixture_media(
             progress: Default::default(),
             network: fixture.network.clone(),
             download_progress: Default::default(),
+            telegram_delete: false,
+            delete_fault: None,
         };
         return crate::server::build_multipart_media_response(
             &request,
@@ -5428,6 +5509,8 @@ impl Driver {
             progress: Default::default(),
             network: self.network.clone(),
             download_progress: Default::default(),
+            telegram_delete: request["telegramDelete"].as_bool().unwrap_or(false),
+            delete_fault: request["deleteFault"].as_str().map(str::to_string),
         };
         let credentials = crate::multipart::Credentials {
             mode,
@@ -5534,6 +5617,8 @@ impl Driver {
                     progress: Default::default(),
                     network: self.network.clone(),
                     download_progress: Default::default(),
+                    telegram_delete: transport.telegram_delete,
+                    delete_fault: transport.delete_fault.clone(),
                 };
                 let id = crate::multipart::operations::move_file(
                     &transport,
@@ -5552,7 +5637,17 @@ impl Driver {
                     .iter()
                     .filter(|r| crate::multipart::is_manifest(&r.caption))
                     .collect();
-                Ok(json!({"documents":documents,"manifests":manifests}))
+                let pending = request["message"]
+                    .as_i64()
+                    .map(|id| {
+                        crate::multipart::operations::pending_delete(
+                            &transport.account,
+                            folder,
+                            id as i32,
+                        )
+                    })
+                    .transpose()?;
+                Ok(json!({"documents":documents,"manifests":manifests,"pendingDelete":pending}))
             }
             "multipart_recovery" => Ok(json!(
                 crate::multipart::recovery::list(&transport, &credentials).await?
