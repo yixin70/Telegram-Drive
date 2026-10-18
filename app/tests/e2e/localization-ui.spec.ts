@@ -2,28 +2,6 @@ import {expect,test} from '@playwright/test';
 import {readFile} from 'node:fs/promises';
 import {desktopFixture,nativeCalls} from './desktop-fixture';
 
-for(const locale of ['en','es'])test(`mobile supporter copy and purchase restoration are localized in ${locale}`,async ({page})=>{
-  const catalog=JSON.parse(await readFile(new URL(`../../src/i18n/locales/${locale}.json`,import.meta.url),'utf8'));
-  const copy=catalog.supporter_license;
-  await page.setViewportSize({width:390,height:800});
-  await desktopFixture(page,{supporterState:'expired',settings:{language:locale}});
-  await page.goto(`/?a11y-fixture=supporter&purchase=mobile&locale=${locale}`);
-  const main=page.locator(`[data-supporter-fixture-ready="${locale}"]`);await expect(main).toBeVisible();
-  await expect(main.getByRole('heading',{name:copy.mobile_title,exact:true})).toBeVisible();
-  await expect(main).toContainText(copy.mobile_description);
-  expect(await main.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
-  await expect(main.getByRole('button',{name:copy.purchase_action,exact:true})).toHaveCount(0);
-  await main.getByText(copy.restore_heading_mobile,{exact:true}).click();
-  const restore=main.getByRole('button',{name:copy.restore_action_mobile,exact:true});await expect(restore).toBeDisabled();
-  await main.getByRole('textbox',{name:copy.recovery_code_label,exact:true}).fill('BROWSER-FIXTURE-NOT-A-REAL-CODE');
-  await expect(restore).toBeDisabled();await main.getByRole('checkbox').check();await restore.click();
-  await expect(main).toContainText(copy.active);
-  await expect(main).toContainText(copy.android_updates_preserved);
-  await expect(page.getByText(copy.purchase_restored,{exact:true})).toBeVisible();
-  expect(await nativeCalls(page,'cmd_activate_supporter')).toHaveLength(1);
-  expect(await nativeCalls(page,'cmd_begin_supporter_checkout')).toHaveLength(0);
-});
-
 test('startup steps and update notices use the saved language through the application',async({page})=>{
  await desktopFixture(page,{holdStartupHealth:true,update:true,settings:{language:'es'}});await page.goto('/');
  await expect(page.getByText('Comprobando servicios locales',{exact:true})).toBeVisible();
@@ -60,7 +38,6 @@ test('update phases, release notes and crash recovery react to language changes'
  await page.getByRole('button',{name:en.runtime.error_recover,exact:true}).click();
  await expect(page.getByText('Healthy content',{exact:true})).toBeVisible();
  expect(await nativeCalls(page,'plugin:updater|install')).toHaveLength(0);
- expect(await nativeCalls(page,'cmd_begin_supporter_checkout')).toHaveLength(0);
 });
 
 test('the translated desktop preview keeps file navigation and zoom usable',async({page})=>{
@@ -139,7 +116,6 @@ test('a loaded desktop language is published to native UI after the application 
  await page.getByRole('dialog').getByRole('combobox',{name:es.settings.app_language,exact:true}).selectOption('en');
  await expect(page.locator('html')).toHaveAttribute('lang','en');await expect(page.locator('html')).toHaveAttribute('dir','ltr');
  await expect.poll(async()=>{const calls=await nativeCalls(page,'cmd_set_native_language');return calls.at(-1)?.args.language;}).toBe('en');
- expect(await nativeCalls(page,'cmd_begin_supporter_checkout')).toHaveLength(0);
 });
 
 

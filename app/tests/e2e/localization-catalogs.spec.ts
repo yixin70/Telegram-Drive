@@ -42,15 +42,13 @@ test('only English and Spanish catalogs ship and load losslessly through the rea
       let release!:()=>void;const gate=new Promise<void>(done=>{release=done;});let requested=false;
       try {
         await page.route(delayed,async route=>{requested=true;await gate;await route.continue();});
-        await desktopFixture(page,{holdSupporter:true});await page.goto(origin);
+        await desktopFixture(page);await page.goto(origin);
         await expect.poll(()=>requested).toBe(true);
         await expect(page.locator('[data-language-bootstrap="loading"]')).toBeVisible();
-        expect(await nativeCalls(page,'cmd_get_supporter_status')).toHaveLength(0);
         await expect(page.locator('iframe')).toHaveCount(0);
         release();
         await expect(page.getByText('Holiday folder photo.jpg',{exact:true})).toBeVisible();
         await expect(page.locator('iframe')).toHaveCount(0);
-        await page.evaluate(()=>(window as any).__desktopTest.releaseSupporter());
         await expect(page.getByRole('button',{name:'Preferences',exact:true})).toBeVisible();
         await expect(page.locator('[data-language-bootstrap]')).toHaveCount(0);
       } finally {release();await context.close();}
@@ -62,7 +60,6 @@ test('only English and Spanish catalogs ship and load losslessly through the rea
         await desktopFixture(page);await page.goto(origin);
         const error=page.locator('[data-language-bootstrap="error"]');await expect(error).toBeVisible();
         await expect(error).not.toContainText('common.');
-        expect(await nativeCalls(page,'cmd_get_supporter_status')).toHaveLength(0);
         await page.unroute(broken.pattern);await error.getByRole('button',{name:'Retry',exact:true}).click();
         await expect(page.getByRole('button',{name:'Preferences',exact:true})).toBeVisible();
         await expect(page.locator('iframe')).toHaveCount(0);
@@ -77,7 +74,6 @@ test('only English and Spanish catalogs ship and load losslessly through the rea
         await desktopFixture(page);await page.goto(origin);await expect.poll(()=>requested).toBe(true);
         const error=page.locator('[data-language-bootstrap="error"]');await expect(error).toBeVisible({timeout:10_000});
         release();await page.waitForLoadState('networkidle');await expect(error).toBeVisible();
-        expect(await nativeCalls(page,'cmd_get_supporter_status')).toHaveLength(0);
         await page.unroute(resource);await error.getByRole('button',{name:'Retry',exact:true}).click();
         await expect(page.getByRole('button',{name:'Preferences',exact:true})).toBeVisible();
       } finally {release();await context.close();}
@@ -91,7 +87,6 @@ test('only English and Spanish catalogs ship and load losslessly through the rea
         });
         await desktopFixture(page);await page.goto(origin);
         await expect(page.locator('[data-language-bootstrap="error"]')).toBeVisible();
-        expect(await nativeCalls(page,'cmd_get_supporter_status')).toHaveLength(0);
       } finally {await context.close();}
     }
     for(const language of languages) {

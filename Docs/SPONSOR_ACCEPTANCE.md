@@ -1,5 +1,7 @@
 # Sponsor placement acceptance for v4.0.0
 
+> **Update 2026-10-18:** The advertising/sponsor subsystem and the optional paid supporter (ad-free license) system have both been removed from this build. This document describes the v4.0.0 sponsor-placement acceptance cycle and is retained as history only; no ad origin, sponsor placement, or entitlement code exists in the current tree.
+
 The established media/share loopback origin remains the default. On desktop, start the candidate with `TELEGRAM_DRIVE_AD_ORIGIN=separate` to select a dedicated OS-assigned loopback listener. Startup health reports `sponsor_port`; the frame and its message checks use that actual port. In separate mode the media server's ad routes are inert, and the ad server exposes no media, share or HLS routes. Failure of the separate listener shows the bounded fallback; it does not silently revert to the media origin. No setting or entitlement migration is required.
 
 **Owner decision:** switching the default to the separate origin waits for this matrix to be completed and reviewed. The existing return interval is **15 minutes**; older release notes saying 45 minutes do not change the current constant. Any different interval is a separate owner decision.

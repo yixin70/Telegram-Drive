@@ -1,10 +1,12 @@
 # Localization review required
 
+> **Update 2026-10-18:** The optional paid supporter (ad-free license) system and the advertising/sponsor surfaces have been removed from this build. Entries below that mention supporter license strings, the supporter promise, sponsor placements, the `supporter_license`/`supporter_offer` key groups, or the files `MobileSupporterCard.tsx`/`DesktopAdBanner.tsx`/`AdsterraBanner.tsx` describe earlier releases; those keys, files and surfaces no longer exist in this tree. The current literal budget is `app/src/i18n/literal-budget.json`.
+
 ## Current support policy
 
 Only English (`en`) and Spanish (`es`) are supported. The other 22 catalogs and picker options have been retired; old explicit preferences fall back to English. Regional English/Spanish system locales remain recognized. The entries below are historical review records, not a list of currently shipped languages. Spanish still requires owner-arranged native review; automated checks do not establish linguistic quality.
 
-These translations and added plural forms require owner-arranged native-language review. Structural, interpolation, browser and layout checks do not establish linguistic quality. No entry below is approved by a native reviewer. The protected $5.00 USD one-time lifetime ad-free promise, three-device allowance, recovery, offline grace and no-subscription meaning must remain intact.
+These translations and added plural forms require owner-arranged native-language review. Structural, interpolation, browser and layout checks do not establish linguistic quality. No entry below is approved by a native reviewer. At the time of this review the one-time purchase promise, three-device allowance, recovery and offline-grace meaning were required to stay intact; that system has since been removed from this build (see the update note above).
 
 ## Earlier P2 additions
 

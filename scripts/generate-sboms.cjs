@@ -81,10 +81,9 @@ function deduplicate(components) {
 }
 
 const appNpm = npmComponents(path.join(repositoryRoot, 'app'));
-const workerNpm = npmComponents(path.join(repositoryRoot, 'supporter-service'));
 const cargoLock = fs.readFileSync(path.join(repositoryRoot, 'app', 'src-tauri', 'Cargo.lock'));
-const inputDigest = sha256(Buffer.concat([appNpm.lockBody, workerNpm.lockBody, cargoLock]));
-const components = deduplicate([...appNpm.components, ...workerNpm.components, ...rustComponents()]);
+const inputDigest = sha256(Buffer.concat([appNpm.lockBody, cargoLock]));
+const components = deduplicate([...appNpm.components, ...rustComponents()]);
 
 const sbom = {
   bomFormat: 'CycloneDX',

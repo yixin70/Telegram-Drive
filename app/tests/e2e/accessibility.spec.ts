@@ -21,13 +21,13 @@ async function encryption(page:Page) {
   return dialog;
 }
 
-test('all twelve Settings tabs and expanded network controls pass axe',async ({page})=>{
+test('every Settings tab and expanded network controls pass axe',async ({page})=>{
   test.setTimeout(120_000);
   await desktopFixture(page,{encryptionReady:true,vaultState:'unlocked',networkEnabled:true,settings:{proxyEnabled:true,vpnEnabled:true,bandwidth_schedule:true}});
   await page.goto('/');await openSettings(page);
   const dialog=page.getByRole('dialog');
   const findings:{tab:string;violations:unknown}[]=[];
-  for(const tab of ['General','Themes','Privacy','Encryption','Folder Sync','Sharing','Advanced','Lifetime license purchased','About']) {
+  for(const tab of ['General','Themes','Privacy','Encryption','Folder Sync','Sharing','Advanced','About']) {
     await dialog.getByRole('button',{name:tab,exact:true}).click();
     await expect(dialog.locator('#settings-dialog-title + p')).toHaveText(tab);
     await page.waitForTimeout(180); // Outgoing tab animation must finish before inspecting the active view.

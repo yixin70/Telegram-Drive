@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../context/ThemeContext';
 import { getLanguageInfo, type SupportedLanguage } from '../../i18n/languages';
 import { ensureLanguageResource } from '../../i18n';
-import { SupporterOfferDialog } from '../shared/SupporterOfferDialog';
 import {
   Badge,
   Button,
@@ -31,8 +30,6 @@ export default function DesignGallery() {
   const [loadedAuditLanguage, setLoadedAuditLanguage] = useState<SupportedLanguage | null>(null);
   const query = new URLSearchParams(window.location.search);
   const localeStress = query.has('locale-stress');
-  const supporterPreview = query.has('supporter-preview');
-  const supporterPreviewPresentation = query.has('mobile-preview') ? 'bottom-sheet' : 'dialog';
   const activeDirection = localeStress ? getLanguageInfo(auditLanguage).dir : direction;
 
   useEffect(() => {
@@ -47,20 +44,6 @@ export default function DesignGallery() {
   const changeAuditLanguage = (language: SupportedLanguage) => {
     setAuditLanguage(language);
   };
-
-  if (supporterPreview) {
-    return (
-      <main className="h-screen overflow-hidden bg-app-canvas p-8 text-app-text">
-        <h1 className="text-xl font-semibold">Supporter offer preview</h1>
-        <SupporterOfferDialog
-          trigger="ad_dismissed"
-          presentation={supporterPreviewPresentation}
-          onClose={() => undefined}
-          onOpenSupporter={() => undefined}
-        />
-      </main>
-    );
-  }
 
   return (
     <main dir={activeDirection} data-density={density} className="h-screen overflow-y-auto bg-app-canvas p-4 text-app-text sm:p-8">

@@ -2,7 +2,7 @@
 
 The release workflow signs and notarizes desktop builds when signing credentials are present in the repository settings. When they are absent, the workflow prints a warning and produces the same unsigned builds as before. A platform with only some of its values set fails the release instead of publishing a build that is signed but not notarized.
 
-Signing changes only the code signature. The bundle identifier `com.cameronamer.telegramdrive`, the updater key, the supporter credential service and account names, the entitlement token format, and the supporter service are not affected.
+Signing changes only the code signature. The bundle identifier `com.cameronamer.telegramdrive`, the updater key, and the application's secure credential service and account names are not affected.
 
 ## macOS: Developer ID and notarization
 
@@ -39,11 +39,11 @@ The application executable and the installer are signed and timestamped. A later
 Run these on real machines before publishing the first signed release. They are not automated.
 
 1. **Update from the last unsigned release.** Install the previous release, sign in, then update in the app. The session, settings, encryption vault, and folder layout must be unchanged.
-2. **Supporter activation survives the update.** On a machine with an active $5 lifetime activation, update and confirm the supporter status is still active and no sponsor placement appears. On macOS the first signed build has a new code identity, so the system may ask once for permission to read the existing Keychain items.
-   - Choosing **Always Allow** must restore the activation with no further prompts.
-   - Choosing **Deny**, or dismissing the prompt, must not show advertisements or a purchase prompt to an existing purchaser. The stored entitlement token still verifies without the Keychain; only refresh and recovery-code display need it.
-   - If either case fails, do not publish. Existing purchasers must never be asked to pay again.
-3. **Recovery code.** Restore the activation with its recovery code on a second machine running the signed build.
+2. **Secure credentials survive the update.** Update and confirm the Telegram API hash and session still resolve without re-entering credentials. On macOS the first signed build has a new code identity, so the system may ask once for permission to read the existing Keychain items.
+   - Choosing **Always Allow** must restore access with no further prompts.
+   - Choosing **Deny**, or dismissing the prompt, must not silently lose stored credentials or reset unrelated settings; the API hash can be re-entered.
+   - If either case fails, do not publish.
+3. **Encryption recovery.** Restore an encrypted vault from its recovery bundle on a second machine running the signed build.
 4. **Gatekeeper and SmartScreen.** Download the published artifacts with a browser on a clean machine and open them. macOS must open the application without the unidentified-developer dialog. Windows SmartScreen reputation builds over time; record what is shown.
 
 ## Rehearsal

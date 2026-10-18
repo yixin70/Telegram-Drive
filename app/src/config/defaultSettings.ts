@@ -14,8 +14,6 @@ export const DEFAULT_SETTINGS: Settings = {
   crashReportingEnabled: false,
   crashReportingConsentSeen: false,
   telegramSettingsSyncEnabled: false,
-  supporterMode: false,
-  supporterPromptLastShownAt: 0,
   driveTourSeen: false,
   vaultRecoveryDrillCompleted: false,
   vaultRecoveryDrillVaultId: '',

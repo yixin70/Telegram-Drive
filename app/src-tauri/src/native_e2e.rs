@@ -1547,7 +1547,6 @@ impl Driver {
             | "start_media_fixture"
             | "start_stream_server"
             | "api_seed_catalog"
-            | "supporter_verify"
             | "start_webdav"
             | "release_retained_sessions"
             | "start_api"
@@ -4126,12 +4125,6 @@ impl Driver {
                 );
                 Ok(json!(true))
             }
-            "supporter_verify" => crate::commands::supporter::verify_issued_token(
-                text(&request, "token")?,
-                text(&request, "devicePublicKey")?,
-                text(&request, "servicePublicKey")?,
-                request["now"].as_i64().ok_or("Missing now")?,
-            ),
             "start_webdav" => {
                 // The WebDAV server exactly as the application serves it;
                 // only the Telegram connection is absent.

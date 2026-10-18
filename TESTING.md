@@ -24,18 +24,17 @@ Behavioral regression testing uses E2E suites. New tests must exercise an applic
 
 ## Host verification
 
-Install JavaScript dependencies in `app/` and `supporter-service/`, the normal native build prerequisites, FFmpeg on macOS/Linux for video upload journeys, and Playwright Chromium:
+Install JavaScript dependencies in `app/`, the normal native build prerequisites, FFmpeg on macOS/Linux for video upload journeys, and Playwright Chromium:
 
 ```sh
 npm ci --prefix app
-npm ci --prefix supporter-service
 cd app
 npx playwright install chromium
 cd ..
 node scripts/run-e2e.cjs
 ```
 
-On Linux CI, install the browser system dependencies with `npx playwright install --with-deps chromium`. The top-level runner stops on the first failing suite. It never deploys the Worker, uses a real PayPal purchase, or signs in to a personal Telegram account.
+On Linux CI, install the browser system dependencies with `npx playwright install --with-deps chromium`. The top-level runner stops on the first failing suite. It never signs in to a personal Telegram account.
 
 Individual suites:
 
@@ -43,11 +42,9 @@ Individual suites:
 | --- | --- | --- |
 | Browser | `npm run test:e2e --prefix app` | User journeys in Chromium, including existing visual/accessibility checks and full application flows; the Tauri/Telegram boundary is controlled by fixtures. |
 | Native | `cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e` | Native child processes, real local storage, vault/envelope persistence and recovery drills, per-account folder layouts, sync planning and recorded results, resumable uploads, transfer retry policy, the redacted log file, private staging, download publication, and the loopback media, REST and WebDAV servers over real HTTP, using synthetic accounts and private temporary directories. |
-| Worker and application | `node --test scripts/e2e/supporter-token.e2e.mjs` | A supporter entitlement issued by the Worker in local workerd, verified by the application's own verifier in the native driver process. Uses a key pair generated for the run; needs both the Rust toolchain and `supporter-service` dependencies. |
-| Supporter service | `npm run test:e2e --prefix supporter-service` | Real HTTP requests to the production Worker in a local workerd runtime with migrated D1; only the external PayPal boundary is simulated. |
 | Release tools | `node scripts/e2e/assurance.e2e.cjs` | Shipped SBOM/checksum CLI processes, generated artifacts, independent checksum verification, invalid-input rejection, the dependency-baseline expiry check, the Android publication guard against real Git repositories, and mandatory route/chunk budget enforcement against generated bundle artifacts. |
 
-`npm test` is an alias for `test:e2e` in both JavaScript projects. `visual:test` and `visual:update` remain browser tooling aliases. The native E2E driver is feature-gated and is excluded from normal application builds.
+`npm test` is an alias for `test:e2e`; `visual:test` and `visual:update` remain browser tooling aliases. The native E2E driver is feature-gated and is excluded from normal application builds.
 
 ## Static checks and builds
 
@@ -61,12 +58,11 @@ node scripts/check-android-publication.cjs
 node scripts/check-baseline-expiry.cjs
 npm run build:verify --prefix app
 npm run i18n:check --prefix app
-npm run check --prefix supporter-service
 cargo fmt --manifest-path app/src-tauri/Cargo.toml --all -- --check
 cargo clippy --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --lib --all-targets -- -D warnings
 ```
 
-The dependency-assurance workflow remains mandatory for desktop publication. Release verification requires browser, native, and service E2E suites before creating a release. CI also builds the normal application on Windows, Linux, and macOS. Unit-test line-coverage floors have been retired; a green E2E run must not be presented as 100% code or feature coverage.
+The dependency-assurance workflow remains mandatory for desktop publication. Release verification requires browser and native E2E suites before creating a release. CI also builds the normal application on Windows, Linux, and macOS. Unit-test line-coverage floors have been retired; a green E2E run must not be presented as 100% code or feature coverage.
 
 ## Device and external-service acceptance
 
@@ -112,9 +108,9 @@ These limits apply to the other native journeys above:
 
 Include these in installed-app acceptance and report them as unrun when they were not exercised.
 
-Browser fixtures do not prove the Tauri IPC bridge, OS credential stores, native codecs, real Telegram network behavior, or installed-app updates. Native loopback/process tests do not replace GUI or OS integration checks. Their encrypted-file fixtures verify vault/envelope persistence and recovery; they do not verify Telegram encrypted-download staging or publication. Worker tests with a simulated PayPal transport do not prove the live provider integration.
+Browser fixtures do not prove the Tauri IPC bridge, OS credential stores, native codecs, real Telegram network behavior, or installed-app updates. Native loopback/process tests do not replace GUI or OS integration checks. Their encrypted-file fixtures verify vault/envelope persistence and recovery; they do not verify Telegram encrypted-download staging or publication.
 
-Before a supported release, perform the relevant installed-app and device acceptance: sign in/out, switch accounts, upload/download/stream, restart/update without losing settings or activation, verify encrypted-file recovery, and exercise Android device flows. Keep the PayPal sandbox purchase/recovery/refund acceptance required by [the supporter contract](SUPPORTER_LICENSE_INVARIANTS.md) before payment-path or schema changes reach production. Never use production purchases, personal sessions, production D1, or real keychain entries as automated test fixtures.
+Before a supported release, perform the relevant installed-app and device acceptance: sign in/out, switch accounts, upload/download/stream, restart/update without losing settings, verify encrypted-file recovery, and exercise Android device flows. Never use personal sessions or real keychain entries as automated test fixtures.
 
 Android device/emulator verification stays local; Android source and test projects must not be published to GitHub. With the SDK/NDK configured and the required system images installed, create the universal debug JNI inputs and run a private emulator from `app/`:
 
@@ -152,10 +148,6 @@ Quota counts successful declared application payload, not exact wire traffic: re
 
 A failed accounting write retains the completed charge in memory and blocks admission until persistence succeeds. A process crash before repair can lose that unsaved charge. Proxy secret rollback is tested through fixture-owned storage; it never writes the real credential store, and OS credentials plus JSON do not share a crash-atomic transaction. Real credential prompts and each OS backend remain acceptance work. Local civil-time scheduling follows skipped/repeated DST minutes as observed locally; elapsed pacing uses a monotonic clock. Actual OS clock/DST transitions, live Telegram upload/download timing, real WebViews, Android devices, installed builds and CI remain unrun. The socket-reset journey ran on this host; its Windows branch has not run. Scheduling/upload enablement and windows are device-local and are not added to Telegram Settings Sync; the existing upload/download rate preferences retain their sync compatibility. No persistent database schema changes are involved.
 
-## Sponsor reliability boundaries
-
-`Docs/SPONSOR_ACCEPTANCE.md` records the unrun WebView2/WKWebView/WebKitGTK/Android acceptance matrix and the owner decision before switching the default origin. Desktop `TELEGRAM_DRIVE_AD_ORIGIN=separate` selects an ad-only loopback listener; the established media origin remains the default. Native journeys drive actual listener/CSP/HTTP and verified signed fixture access, including active/grace204, expiry, an invalid verification, and suppression during fresh/stale relay responses. The fixture transport is compiled only with `native-e2e`, replaces provider HTTP/DNS, and reuses the loader request and validator. It proves no real provider delivery or installed OS credential behavior. Browser journeys cover both selected origins, unchanged sandbox/countdown/15-minute interval, translated status and the existing fallback destination through a controlled opener. Real WebViews, live provider/DNS, Android/TV, installed update/recovery acceptance and CI remain unrun.
-
 For hosts running many synthetic native processes and Actix worker pools, `RUST_TEST_THREADS=4 cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e` runs the complete suite with four independent fixtures at a time. It retains explicit concurrency inside each journey. An earlier P2-20 full run at default concurrency had 97 passes and two failures (SQLite busy in the media-range journey and a 5-second FFmpeg fixture readiness deadline); retain that result alongside isolated diagnostics and the bounded complete run. This invocation is not a substitute for real platform/installed-app acceptance.
 
 ## Accessibility journeys and device boundaries
@@ -176,11 +168,11 @@ The production-catalog browser journey builds real Vite assets and serves them o
 
 The release-tool suite also runs the locale-validation CLI against temporary catalogs, proving missing required plurals, changed extra-form interpolation and copied-English extra forms are rejected. The bundle CLI counts the shared dictionary, rejects unpacked production resources, missing tables and changed packed values, and retains all route/chunk/locale ceilings. Source catalogs remain ordinary JSON; the distributed arrays are a lossless representation. Every added translation/plural range requiring native review is listed in `Docs/LOCALIZATION_REVIEW.md`.
 
-Mobile supporter browser journeys in Spanish, Arabic and Japanese cover the translated promise, narrow layout, terms-gated recovery input, a restored entitlement and its localized toast. They verify one recovery command and zero new checkout commands for an existing purchaser. The boundary uses controlled native responses; real Android Keystore, devices and purchases remain unrun.
+Mobile localization browser journeys in Spanish cover translated promise and privacy copy, narrow layout, and the localized toast for restored settings. The boundary uses controlled native responses; real Android Keystore and devices remain unrun.
 
 All 24 catalogs, including English, are now local data assets. The bootstrap awaits complete resources before React mounts, using a small canonical-derived set of translated loading/error/retry labels if resources fail. The attempt has an eight-second deadline; timed-out responses cannot mount the application later. Reload clears dictionary/catalog requests. Saved-language lookup waits at most 700 ms before using the system language; normal Settings loading can apply the persisted preference later. This lookup does not write preferences or credentials.
 
-The production journey delays English and dictionary responses, rejects missing and malformed versions of either, waits through an actual timeout, checks that a late response cannot mount the app, and reloads to recover. It also retains supporter loading suppression and checks every canonical value in every language. Standalone development entrypoints explicitly await English before mounting. An earlier foundation full run passed 90 browser journeys and failed 12 standalone journeys because those entrypoints skipped resource readiness; the fixtures were corrected without changing assertions, clocks, axe rules or snapshots. Real installed Tauri/WebView asset loading remains unrun. Startup English and dictionary data bytes must be reported alongside JavaScript reductions.
+The production journey delays English and dictionary responses, rejects missing and malformed versions of either, waits through an actual timeout, checks that a late response cannot mount the app, and reloads to recover. It also checks every canonical value in every language. Standalone development entrypoints explicitly await English before mounting. An earlier foundation full run passed 90 browser journeys and failed 12 standalone journeys because those entrypoints skipped resource readiness; the fixtures were corrected without changing assertions, clocks, axe rules or snapshots. Real installed Tauri/WebView asset loading remains unrun. Startup English and dictionary data bytes must be reported alongside JavaScript reductions.
 
 Localization runtime journeys hold the real entry point at its simulated native startup-health boundary and verify the saved-language progress label, detail and percent. Production update/recovery components are also exercised through Spanish download/verification/install phases and release notes, then an Arabic language change while the error boundary is showing, technical details and reload. The existing update-install retry/package-manager journeys remain required. The browser controls native state and render failures; OS presentation and installed update acceptance remain unrun.
 
@@ -207,7 +199,7 @@ The native child-process suite exercises two queued old-session peer discoveries
 
 TDENC2 known-answer native journeys use immutable public vectors from the v3.9.8 source encoders and this tree. They compare exact bytes, continue saved headers, restore a historical vault/recovery bundle across restart, and reject corrupted envelopes without publishing plaintext. They do not exercise an installed historical app or live Telegram. See [format provenance](Docs/TDENC2_FORMAT.md) and [real-device recovery drill](Docs/ENCRYPTION_RECOVERY_DRILL.md).
 
-Release input preflight: `node scripts/release-preflight.cjs --service-url "$SUPPORTER_SERVICE_URL" --public-key "$SUPPORTER_PUBLIC_KEY"`. The desktop 4.0.0 heading is finalized; release readiness uses the strict default without `--allow-unreleased`. `--skip-network` explicitly returns exit 2 / SKIPPED and cannot pass release readiness. Health verification makes one read-only GET; local HTTP stand-ins are allowed only on loopback. Artifact provenance can be checked with `--verify-attestation FILE --attestation-repo OWNER/REPO`. The authorized read-only production health result is recorded separately in the release-readiness report; published artifact attestation remains unrun until artifacts exist.
+Release input preflight: `node scripts/release-preflight.cjs --allow-unreleased`. Release readiness uses the strict default without `--allow-unreleased`, which requires a finalized version heading in `CHANGELOG.md`. The preflight runs only local checks (version agreement, required build inputs, baseline expiry, test policy, application security, and the Android publication guard) and makes no network request. Artifact provenance can be checked with `--verify-attestation FILE --attestation-repo OWNER/REPO`; published artifact attestation remains unrun until artifacts exist.
 
 Storage insights reuse the generation-backed search inventory and report `complete: false` for bounded/offline inventory. The native journey scans 1,200 files across two fixture folders, retains the 1,000-result display limit, and proves subsequent views need no additional source requests. Insights now exclude locally hidden files consistently with workspace search. Proxy transport journeys accept a valid RPC rejection but refuse malformed/disconnected controlled HTTP; the real MTProto/proxy handshake remains UNRUN. Desktop external-file journeys register published downloads, restart, and refuse arbitrary/modified/symlink-substituted paths using an opening sink; installed OS external opening remains UNRUN. Six new hook IDs use UUIDs; persisted legacy transfer IDs remain opaque strings in the durable engine.
 

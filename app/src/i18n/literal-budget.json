@@ -1,14 +1,6 @@
 {
-  "maxFindings": 298,
+  "maxFindings": 297,
   "areaBudgets": {
-    "supporterAndSponsors": {
-      "maxFindings": 1,
-      "patterns": [
-        "Supporter",
-        "AdBanner",
-        "Adsterra"
-      ]
-    },
     "encryptionAndAccess": {
       "maxFindings": 0,
       "patterns": [

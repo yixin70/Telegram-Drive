@@ -8,7 +8,6 @@
     "app/src-tauri/capabilities/mobile.json",
     "app/src/components/mobile/MobileDashboard.tsx",
     "app/src/components/mobile/MobileMediaPlayer.tsx",
-    "app/src/components/mobile/MobileSupporterCard.tsx",
     "app/src/components/mobile/TouchFileList.tsx"
   ],
   "pending_owner_review": [

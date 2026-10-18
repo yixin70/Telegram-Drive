@@ -4,9 +4,6 @@ dist/
 /app/test-results/
 /app/playwright-report/
 /app/coverage/
-/supporter-service/coverage/
-/supporter-service/.dev.vars
-/supporter-service/.wrangler/
 .DS_Store
 .env
 

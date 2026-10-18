@@ -27,7 +27,6 @@ const classes = [
       'src-tauri/src/lib.rs',
       'src-tauri/src/commands/fs.rs',
       'src-tauri/src/commands/network.rs',
-      'src-tauri/src/commands/supporter.rs',
       'src-tauri/src/android_security.rs',
       'src-tauri/src/android_updates.rs',
     ],

@@ -1444,16 +1444,6 @@ pub(crate) fn invoke_handler(
         commands::cmd_get_sync_conflicts,
         commands::cmd_get_sync_log,
         commands::cmd_resolve_conflict,
-        #[cfg(not(target_os = "ios"))]
-        commands::cmd_get_supporter_status,
-        #[cfg(not(target_os = "ios"))]
-        commands::cmd_begin_supporter_checkout,
-        #[cfg(not(target_os = "ios"))]
-        commands::cmd_poll_supporter_checkout,
-        #[cfg(not(target_os = "ios"))]
-        commands::cmd_activate_supporter,
-        #[cfg(not(target_os = "ios"))]
-        commands::cmd_refresh_supporter,
         commands::cmd_check_connection,
         commands::cmd_is_network_available,
         commands::cmd_get_android_network_status,

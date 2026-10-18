@@ -1,5 +1,7 @@
 # Release acceptance: owner checklist
 
+> **Update 2026-10-18:** The optional paid supporter (ad-free license) system and the advertising/sponsor surfaces have been removed from this build. Rows below that mention supporter activation, ad-free state, recovery codes, PayPal sandboxes, sponsor placements or the deleted `SPONSOR_ACCEPTANCE.md` refer to earlier release cycles and are retained as history only.
+
 For desktop 4.0.0, every manual platform, installed-upgrade, real WebView, live Telegram and PayPal sandbox acceptance row below is **not run for 4.0.0 by owner decision**. These rows are not passed by local fixtures or automated CI. Automated builds and suites still must pass. No manual platform or live-service exercise is authorized in this release cycle.
 
 The steps below remain a future acceptance runbook. Record source revision, installed version, OS/device/WebView, exact artifact/checksum/signature, date and sanitized evidence if a later owner decision authorizes them. Never expose sessions, API hashes, payment credentials, recovery codes or private keys. TDENC2 remains frozen-format beta with independent cryptographic review pending. Desktop 4.0.0 and Android/Google TV 4.1.0 preview are independent version lines; no Android build or release occurs here.

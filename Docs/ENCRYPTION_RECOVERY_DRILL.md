@@ -1,6 +1,6 @@
 # Encryption recovery drill
 
-Status: native fixture recovery journeys PASS locally; real-device drill UNRUN. Use expendable test files and a separate backup of the existing encrypted vault before replacing anything. Supporter activation recovery is a separate system and is not changed by this drill.
+Status: native fixture recovery journeys PASS locally; real-device drill UNRUN. Use expendable test files and a separate backup of the existing encrypted vault before replacing anything.
 
 1. Create/unlock a test vault in Settings → Encryption. Upload a plain control file and protected files with and without protected names, including a Folder Sync file with a nested relative path. Keep original plaintext hashes outside the app. Expected: protected downloads match; the nested path restores correctly. Failure means transfer or metadata placement is not ready.
 2. Export a recovery bundle with a distinct strong recovery passphrase. Store the bundle and passphrase separately. Verify it in the current unlocked vault. Expected: verification covers the current master key and all profile keys. Re-export after changing any supported encryption material. The native fixture separately adds a profile key and proves an older bundle reports incomplete coverage; profile creation has no production UI, so that substep is fixture-only. Failure risks losing newer keys.

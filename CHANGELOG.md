@@ -1,3 +1,12 @@
+## [Unreleased]
+
+### Personal-use build: every feature free, paid supporter license removed
+
+- Remove the optional $5 lifetime ad-free supporter license entirely: the client offer, license and recovery settings UI, and the supporter Rust/Tauri commands and IPC bridge; the Cloudflare Worker verification service, PayPal checkout, recovery lookup, and D1 entitlement database; and the release workflows, scripts, tests, and protected-contract documentation that supported it.
+- Remove the donation surface on the sign-in screen and the residual supporter and sponsor localization strings. Every feature is free with no paid tier, no checkout, no entitlement, and no verification service; the application makes no requests to advertising providers.
+- This build is intended for personal use. Existing settings, sessions, vaults, transfer queues, share links, folder mappings, and encrypted-file records remain compatible. There is no paid activation to preserve, so normal updates simply continue to work without any license or device allowance.
+- Verification: frontend type check, production build, i18n and bundle-budget scans, test-policy and Android-publication checks, and Rust compilation passed. Browser, native and release-tool E2E suites were exercised but are not fully green; final results and known failures are recorded in the implementation handoff. No lint script is configured. No production PayPal, Cloudflare, or D1 state is touched; rollback is a revert of this change set.
+
 ## [4.1.2] - 2026-10-14
 
 ### Desktop video streaming metadata

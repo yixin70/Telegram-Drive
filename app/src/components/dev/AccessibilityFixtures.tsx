@@ -1,6 +1,5 @@
 import { LocalizationArraysBrowserFixture } from './LocalizationArraysBrowserFixture';
 import {RuntimeCopyBrowserFixture} from './RuntimeCopyBrowserFixture';
-import { SupporterBrowserFixture } from './SupporterBrowserFixture';
 import { useEffect, useState } from 'react';
 import {useTvSpatialNavigation} from '../../hooks/useTvSpatialNavigation';
 import { AuthWizard } from '../shared/AuthWizard';
@@ -8,7 +7,6 @@ import { FileExplorer } from '../desktop/dashboard/FileExplorer';
 import { SettingsModal } from '../desktop/dashboard/SettingsModal';
 import { ShareDialog } from '../desktop/dashboard/ShareDialog';
 import { BottomNavBar } from '../mobile/BottomNavBar';
-import { MobileSupporterCard } from '../mobile/MobileSupporterCard';
 import type { TelegramFile, TelegramFolder } from '../../types';
 
 const file: TelegramFile = {
@@ -72,8 +70,6 @@ export default function AccessibilityFixtures() {
 
   if (fixture === 'runtime-copy') return <RuntimeCopyBrowserFixture />;
 
-  if (fixture === 'supporter') return <SupporterBrowserFixture />;
-
   if (fixture === 'auth') {
     // AuthWizard intentionally shows a browser-only notice outside Tauri. This
     // development fixture marks the page as native so axe exercises the real
@@ -107,7 +103,6 @@ export default function AccessibilityFixtures() {
     return (
       <main className="min-h-screen bg-telegram-bg p-4 pb-32 text-telegram-text">
         <h1 className="mb-4 text-lg font-semibold">Mobile settings</h1>
-        <MobileSupporterCard />
         <BottomNavBar activeTab={mobileTab} setActiveTab={setMobileTab} isAndroid />
       </main>
     );

@@ -14,7 +14,7 @@ function files(directory) {
   });
 }
 
-for (const project of ['app', 'supporter-service']) {
+for (const project of ['app']) {
   const manifest = JSON.parse(read(`${project}/package.json`));
   const e2e = manifest.scripts?.['test:e2e'];
   if (!e2e || ![e2e, 'npm run test:e2e', 'npm run test:e2e --'].includes(manifest.scripts?.test)) {
@@ -32,7 +32,7 @@ for (const project of ['app', 'supporter-service']) {
 for (const directory of ['app/tests/unit', 'app/android-overrides/app/src/test']) {
   if (files(directory).length) problems.push(`${directory}: replace unit cases with application or device journeys.`);
 }
-for (const file of [...files('app/src'), ...files('supporter-service/src')]) {
+for (const file of [...files('app/src')]) {
   if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) problems.push(`${file}: production source must not contain unit suites.`);
 }
 for (const file of files('app/src-tauri/src').filter(file => file.endsWith('.rs'))) {
@@ -53,7 +53,6 @@ for (const file of [
   'app/playwright.config.ts',
   'app/src-tauri/tests/native_e2e.rs',
   'scripts/e2e/assurance.e2e.cjs',
-  'scripts/e2e/supporter-token.e2e.mjs',
 ]) {
   if (!exists(file)) problems.push(`${file}: required E2E entrypoint is missing.`);
 }

@@ -52,7 +52,6 @@ test('onboarding, Help and shortcut data arrays follow the saved language throug
   await expect(shortcuts.getByText('⌘/Ctrl F', { exact: true })).toBeVisible();
   await shortcuts.getByRole('button', { name: es.ui_copy.close_shortcuts, exact: true }).click();
   expect(await nativeCalls(page, 'cmd_auth_qr_login')).toHaveLength(0);
-  expect(await nativeCalls(page, 'cmd_begin_supporter_checkout')).toHaveLength(0);
 });
 
 
@@ -86,7 +85,7 @@ test('encrypted settings warnings, entered passphrase and badge explanation surv
   const calls = await nativeCalls(page, 'cmd_upload_settings_sync');
   expect(calls).toHaveLength(1);
   expect(calls[0].args.passphrase).toBe('fixture-sync-passphrase');
-  for (const excluded of ['supporter_activation', 'proxyPassword', 'crashReportingEnabled', 'videoFilenameCaption']) expect(calls[0].args.settings).not.toHaveProperty(excluded);
+  for (const excluded of ['proxyPassword', 'crashReportingEnabled', 'videoFilenameCaption']) expect(calls[0].args.settings).not.toHaveProperty(excluded);
 });
 
 

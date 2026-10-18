@@ -66,8 +66,6 @@ pub mod sharing;
 pub mod startup;
 pub mod storage_insights;
 pub mod streaming;
-#[cfg(not(target_os = "ios"))]
-pub mod supporter;
 pub mod sync;
 pub mod utils;
 pub mod video_metadata;
@@ -89,8 +87,6 @@ pub use sharing::*;
 pub use startup::*;
 pub use storage_insights::*;
 pub use streaming::*;
-#[cfg(not(target_os = "ios"))]
-pub use supporter::*;
 pub use sync::*;
 pub use utils::*;
 pub use video_metadata::*;

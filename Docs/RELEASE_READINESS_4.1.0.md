@@ -1,5 +1,7 @@
 # Desktop 4.1.0 release readiness
 
+> **Update 2026-10-18:** The optional paid supporter (ad-free license) system and the advertising/sponsor surfaces have been removed from this build. Results below that mention the supporter Worker, entitlements, PayPal or the production supporter preflight describe the 4.1.0 candidate and are retained as history only.
+
 Prepared 2026-10-13 from published desktop 4.0.0 source `81aa3a70d177ef4759bd54d5aa86f67a7827fa66`. The owner authorized a full stable desktop release, followed by a separate Android 4.1.0 APK compiled locally. This report records exercised boundaries; it does not turn unrun manual acceptance into passes.
 
 ## Scope and compatibility

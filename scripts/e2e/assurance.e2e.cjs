@@ -365,42 +365,24 @@ sqlite={version="=0.37.0",features=["bundled"]}
 });
 
 
-test('release preflight checks local inputs and exactly one read-only health request', async t => {
-  const http = require('node:http');
+test('release preflight checks local inputs without any network request or supporter flag', async t => {
   const { spawn } = require('node:child_process');
-  let health = { status: 'ok', price: '5.00', currency: 'USD', max_active_devices: 3, entitlement_public_key: 'public-fixture-key' };
-  const requests = [];
-  const server = http.createServer((req, res) => {
-    requests.push([req.method, req.url]);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(health));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
   const root = path.resolve(scripts, '..');
-  let extraEnv = {};
   const invoke = (...args) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(scripts, 'release-preflight.cjs'), '--allow-unreleased', ...args], { cwd: root, env: { ...process.env, SUPPORTER_SERVICE_URL: '', TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: '', SUPPORTER_PUBLIC_KEY: '', TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: '', ...extraEnv } });
+    const child = spawn(process.execPath, [path.join(scripts, 'release-preflight.cjs'), ...args], { cwd: root });
     let stdout = '', stderr = '';
     child.stdout.on('data', data => { stdout += data; });
     child.stderr.on('data', data => { stderr += data; });
     child.on('error', reject); child.on('close', status => resolve({ status, stdout, stderr }));
   });
-  const url = `http://127.0.0.1:${server.address().port}`;
-  const healthy = await invoke('--service-url', url, '--public-key', 'public-fixture-key');
-  success(healthy); assert.match(healthy.stdout, /PASSED/); assert.deepEqual(requests, [['GET', '/health']]);
-  extraEnv = { SUPPORTER_PUBLIC_KEY: 'public-fixture-key', TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: 'different-build-key' };
-  const conflicting = await invoke('--service-url', url);
-  assert.notEqual(conflicting.status, 0); assert.match(conflicting.stderr, /conflicting/i);
-  extraEnv = {};
-  const skipped = await invoke('--skip-network');
-  assert.equal(skipped.status, 2); assert.match(skipped.stdout, /SKIPPED/); assert.doesNotMatch(skipped.stdout, /PASSED/);
-  const keyMismatch = await invoke('--service-url', url, '--public-key', 'other-key');
-  assert.notEqual(keyMismatch.status, 0); assert.match(keyMismatch.stderr, /public key/);
-  for (const mutation of [{ price: '6.00' }, { currency: 'EUR' }, { max_active_devices: 4 }]) {
-    const previous = health; health = { ...health, ...mutation };
-    assert.notEqual((await invoke('--service-url', url)).status, 0); health = previous;
-  }
+  const readiness = await invoke('--allow-unreleased');
+  success(readiness); assert.match(readiness.stdout, /PASSED/); assert.match(readiness.stdout, /Artifact attestation UNRUN/);
+  const unknown = await invoke('--allow-unreleased', '--skip-network');
+  assert.notEqual(unknown.status, 0); assert.match(unknown.stderr, /Unknown flag/);
+  const noRepo = await invoke('--allow-unreleased', '--verify-attestation', 'artifact.bin');
+  assert.notEqual(noRepo.status, 0); assert.match(noRepo.stderr, /--attestation-repo/);
+  const missing = await invoke('--allow-unreleased', '--verify-attestation', 'artifact.bin', '--attestation-repo', 'owner/repo');
+  assert.notEqual(missing.status, 0); assert.match(missing.stderr, /artifact/i);
   const draft = fixture(t);
   for (const name of ['app/package.json', 'app/package-lock.json', 'app/src-tauri/Cargo.toml',
     'app/src-tauri/Cargo.lock', 'app/src-tauri/tauri.conf.json', 'scripts/release-preflight.cjs']) {
@@ -410,10 +392,7 @@ test('release preflight checks local inputs and exactly one read-only health req
   }
   fs.writeFileSync(path.join(draft, 'CHANGELOG.md'), '## [Unreleased]\n\nExplicit draft fixture.\n');
   const strict = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(draft, 'scripts/release-preflight.cjs'), '--skip-network'], {
-      cwd: draft, env: { ...process.env, SUPPORTER_SERVICE_URL: '', TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: '',
-        SUPPORTER_PUBLIC_KEY: '', TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: '' }
-    });
+    const child = spawn(process.execPath, [path.join(draft, 'scripts/release-preflight.cjs')], { cwd: draft });
     let stderr = ''; child.stderr.on('data', data => { stderr += data; });
     child.on('error', reject); child.on('close', status => resolve({ status, stderr }));
   });

@@ -1,6 +1,6 @@
 # Linux packaging and rendering compatibility
 
-Telegram Drive ships Linux release artifacts for different installation models. All of them use the same application identifier and data locations, and none of the packages should remove user configuration, cached metadata, Telegram sessions, or supporter activation during an install or upgrade.
+Telegram Drive ships Linux release artifacts for different installation models. All of them use the same application identifier and data locations, and none of the packages should remove user configuration, cached metadata, or Telegram sessions during an install or upgrade.
 
 ## Choose a package
 
@@ -54,7 +54,7 @@ Copy Telegram Drive's diagnostics from Settings when possible. Also include:
 - terminal output from the failing launch; and
 - whether `TELEGRAM_DRIVE_SAFE_RENDERING=1` changes the result.
 
-Review diagnostic output before posting it publicly. Do not include Telegram credentials, API hashes, recovery codes, supporter tokens, or private filenames.
+Review diagnostic output before posting it publicly. Do not include Telegram credentials, API hashes, vault recovery material, or private filenames.
 
 ## Release safeguards
 
@@ -77,4 +77,4 @@ The release workflow does not publish to the Arch User Repository. The repositor
 
 ## Rollback
 
-Install a previously downloaded release package with the appropriate package tool. Do not delete the application data directory as part of a package rollback. If the issue is AppImage-only, the native distribution package is the preferred temporary alternative while retaining the same data and entitlement identifiers.
+Install a previously downloaded release package with the appropriate package tool. Do not delete the application data directory as part of a package rollback. If the issue is AppImage-only, the native distribution package is the preferred temporary alternative while retaining the same data and credential identifiers.

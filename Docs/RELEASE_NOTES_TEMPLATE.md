@@ -14,7 +14,7 @@ Require a successful verification for the expected repository and inspect the re
 
 ## Compatibility and acceptance
 
-TDENC2 is a frozen-format beta; independent cryptographic review remains pending. Every feature remains free. The optional one-time $5.00 USD lifetime ad-free supporter entitlement, three-device allowance and recovery codes remain compatible. Link the [acceptance runbook](RELEASE_ACCEPTANCE.md) and record actual executed platforms rather than implying all platforms passed.
+TDENC2 is a frozen-format beta; independent cryptographic review remains pending. Every feature is free, with no purchase, subscription, or paid tier. Link the [acceptance runbook](RELEASE_ACCEPTANCE.md) and record actual executed platforms rather than implying all platforms passed.
 
 Rehearsal packaging retains the plain base application version: tag `vX.Y.Z-rc.N` uses application/changelog `X.Y.Z`, so DMG, NSIS, Debian and Arch inputs keep the existing plain-version shape. The same-version final installer must be installed manually in the isolated rehearsal profile. Suffix-version acceptance by the real macOS/NSIS bundlers is UNRUN; this policy avoids requiring it. Never mirror rehearsal `latest.json` to the stable website endpoint.
 

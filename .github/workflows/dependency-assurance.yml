@@ -6,8 +6,6 @@ on:
     paths:
       - 'app/package.json'
       - 'app/package-lock.json'
-      - 'supporter-service/package.json'
-      - 'supporter-service/package-lock.json'
       - 'app/src-tauri/Cargo.toml'
       - 'app/src-tauri/Cargo.lock'
       - 'deny.toml'
@@ -43,25 +41,7 @@ jobs:
           node-version: 22
       - run: node scripts/check-baseline-expiry.cjs --warn-days 14
 
-  node-assurance:
-    name: npm advisories and licenses
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        # The app npm assurance check is intentionally disabled at the owner's request.
-        # Keep the supporter service and the separate Rust assurance jobs covered.
-        project: [supporter-service]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ${{ matrix.project }}/package-lock.json
-      - run: npm ci --ignore-scripts
-        working-directory: ${{ matrix.project }}
-      - run: node scripts/check-npm-audit.cjs ${{ matrix.project }}
-      - run: node scripts/check-node-licenses.cjs ${{ matrix.project }}
+  # The app npm assurance check remains disabled at the owner's request.
 
   assurance-cli-e2e:
     name: Release assurance CLI end-to-end

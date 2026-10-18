@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 /** Real application entry point and providers; only the native/service boundary is simulated.
- * These browser journeys do not validate SQLite, Keychain, Telegram, or payment cryptography.
+ * These browser journeys do not validate SQLite, Keychain, or live Telegram behavior.
  */
 export async function desktopFixture(page: Page, options: {
   pickedUploadPaths?: string[];
@@ -9,8 +9,6 @@ export async function desktopFixture(page: Page, options: {
   holdFiles?: boolean;
   holdNotes?: boolean;
   holdStartupHealth?: boolean;
-  holdSupporter?: boolean;
-  supporterState?: 'active' | 'needs_refresh' | 'expired' | 'inactive';
   update?: boolean;
   packageManaged?: boolean;
   signedOut?: boolean;
@@ -47,20 +45,18 @@ export async function desktopFixture(page: Page, options: {
   await page.addInitScript(options => {
     const stores = JSON.parse(localStorage.getItem('desktop-e2e-stores') || 'null') ?? {
       'config.json': { api_id: options.signedOut ? undefined : '12345', foldersLastSyncedAt: Date.now(), activeFolderId: 9, ad_gateway_passed: options.gatewaySeen ?? true },
-      'settings.json': { settings: { crashReportingEnabled: false, crashReportingConsentSeen: true, driveTourSeen: true, language: 'en', viewMode: 'list', ...(options.settings ?? {}) }, supporter_activation: 'preserve-existing-license' },
+      'settings.json': { settings: { crashReportingEnabled: false, crashReportingConsentSeen: true, driveTourSeen: true, language: 'en', viewMode: 'list', ...(options.settings ?? {}) }, legacy_setting_probe: 'preserve-existing-value' },
     };
     const persist = () => localStorage.setItem('desktop-e2e-stores', JSON.stringify(stores));
     const callbacks = new Map<number, (value: any) => void>();
     const listeners = new Map<number, { event: string; handler: number }>();
     let nextId = 1;
     let releaseFiles: (() => void) | undefined;
-    let releaseSupporter: (() => void) | undefined;
     const fileGate = new Promise<void>(resolve => { releaseFiles = resolve; });
     let releaseThumbnails: (() => void) | undefined;
     const thumbnailGate = new Promise<void>(resolve => { releaseThumbnails = resolve; });
     let releaseVaultUnlock: (() => void) | undefined;
     const vaultUnlockGate = new Promise<void>(resolve => { releaseVaultUnlock = resolve; });
-    const supporterGate = new Promise<void>(resolve => { releaseSupporter = resolve; });
     let releaseSearch:(()=>void)|undefined;const searchGate=new Promise<void>(resolve=>{releaseSearch=resolve;});
     let releaseStartupHealth: (()=>void) | undefined;
     const startupHealthGate=new Promise<void>(resolve=>{releaseStartupHealth=resolve;});
@@ -90,8 +86,6 @@ export async function desktopFixture(page: Page, options: {
       searchHold:false, searchFails:false, searchPageSize:256, searchBuilding:0, searchDuplicateIds:false, releaseSearch:()=>{state.searchHold=false;releaseSearch?.();},
       quotaSaveFails:false, weeklyQuota:Number(localStorage.getItem('desktop-e2e-weekly-quota') ?? 5 * 1024 ** 4),
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
-      holdSupporter: options.holdSupporter ?? false, supporterState: options.supporterState ?? 'active',
-      supporterRefreshFails: options.supporterState === 'needs_refresh',
       logoutFails: false, remoteSignOutUnconfirmed: false, saveFails: false, installFails: true, incompleteDownload: false,
       update: options.update ?? false, stores, calls: (savedTransfers?.calls ?? []) as { command: string; args: any }[],
       sync: { settings: { enabled: false, debounceMs: 2000, encryption: 'inherit', scanner: 'full' } as Record<string, unknown>, pairs: [] as any[] },
@@ -100,7 +94,6 @@ export async function desktopFixture(page: Page, options: {
       inventoryName: null as string | null, inventoryFailure: false, inventoryBuilding: 0, inventoryPresent: true, protectedInterrupted: false, vaultLocked: options.vaultState === 'locked',
       completedFileRequests: [] as { ownerId: string; requestId: string }[],
       releaseFiles: () => { state.holdFiles = false; releaseFiles?.(); },
-      releaseSupporter: () => { state.holdSupporter = false; releaseSupporter?.(); },
       emit: (event: string, payload: any) => {
         for (const [id, listener] of listeners) if (listener.event === event) callbacks.get(listener.handler)?.({ id, event, payload });
       },
@@ -113,12 +106,6 @@ export async function desktopFixture(page: Page, options: {
       is_favorite: false, type: 'image',
     });
     const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#284b63"/><circle cx="320" cy="240" r="150" fill="#98d8ea"/></svg>')}`;
-    const status = () => ({
-      state: state.supporterState, ad_free: ['active', 'needs_refresh'].includes(state.supporterState),
-      message: 'Fixture entitlement', terms_version: '2026-08-11', terms_url: 'https://example.invalid/terms',
-      expires_at: Date.now() / 1000 + (state.supporterState === 'active' ? 86400 : -86400),
-      offline_until: Date.now() / 1000 + 6 * 86400, recovery_code_saved: state.supporterState !== 'inactive', checkout_pending: false,
-    });
     Object.assign(window, {
       __desktopTest: state,
       __TAURI_OS_PLUGIN_INTERNALS__: { os_type: options.platform ?? 'windows', platform: options.platform ?? 'windows', arch: 'x86_64', version: '11', family: options.platform === 'android' ? 'unix' : 'windows' },
@@ -269,10 +256,6 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_bandwidth') return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' };
           if (command === 'cmd_set_weekly_quota') { if (state.quotaSaveFails) throw new Error('Storage unavailable'); state.weeklyQuota = args.limitBytes; localStorage.setItem('desktop-e2e-weekly-quota', String(args.limitBytes)); return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' }; }
           if (command === 'cmd_get_storage_insight') return { files: [file(80, 1)], scanned_count: 1200, duplicate_groups: 0, complete: false };
-          if (command === 'cmd_get_supporter_status') { if (state.holdSupporter) await supporterGate; return status(); }
-          if (command === 'cmd_refresh_supporter') { if (state.supporterRefreshFails) throw new Error('Network offline'); return status(); }
-          if (command === 'cmd_begin_supporter_checkout') { if (state.allowCheckoutFixture) return { approval_url: 'https://www.sandbox.paypal.com/checkoutnow?token=PUBLIC-FIXTURE', checkout_id: 'public-fixture' }; throw new Error('Checkout forbidden in browser fixtures'); }
-          if (command === 'cmd_activate_supporter') { state.supporterState = 'active'; return status(); }
           if (command === 'cmd_logout') {
             if (state.logoutFails) throw new Error('Private native diagnostic');
             return { signed_out: true, remote_session_revoked: !state.remoteSignOutUnconfirmed };

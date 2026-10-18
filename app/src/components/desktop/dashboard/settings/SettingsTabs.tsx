@@ -18,7 +18,6 @@ import {
 import i18n from '../../../../i18n';
 import { LazyFeatureBoundary } from '../../../shared/LazyFeatureBoundary';
 
-const SupporterSettingsSection = lazy(() => import('./SupporterSettingsSection').then(module => ({ default: module.SupporterSettingsSection })));
 const NotesSettingsSection = lazy(() => import('./NotesSettingsSection'));
 
 const tabMotion = {
@@ -217,10 +216,6 @@ export function PrivacySettingsTab({ crashReportingEnabled, onCrashReportingChan
       <SettingsSyncSection settings={settings} onSettingsChange={onSettingsChange} onEnabledChange={onSettingsSyncEnabledChange} />
     </motion.section>
   );
-}
-
-export function LicenseSettingsTab() {
-  return <motion.section key="license" {...tabMotion}><LazyFeatureBoundary><SupporterSettingsSection /></LazyFeatureBoundary></motion.section>;
 }
 
 interface AdvancedSettingsTabProps {

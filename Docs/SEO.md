@@ -16,8 +16,7 @@ workflow.
 - The canonical link, Open Graph URL, and structured data all use the HTTPS custom
   domain. Keep the title and descriptions consistent with the visible product copy.
 - `WebSite` structured data supplies the site name. `SoftwareApplication` describes
-  the free application; the optional supporter license does not change the app's
-  zero purchase price. Do not invent ratings or reviews to satisfy rich-result checks.
+  the free application, which has no purchase, subscription, or paid tier. Do not invent ratings or reviews to satisfy rich-result checks.
   Google's software-app rich result requires a qualifying rating or review, which
   this page does not currently provide.
 - All main text, FAQ answers, and download fallback links are present in the static

@@ -24,8 +24,7 @@ Organize, transfer, preview, stream, sync, and share the files you keep in Saved
 
 Telegram Drive turns Telegram's familiar file storage into a focused, desktop-style workspace. The app connects directly to Telegram with credentials you provide; it does not run a separate file-storage or relay service. Every application feature is available without payment.
 
-> [!NOTE]
-> This source checkout has advertising removed: no sponsor gateway, banners, ad-provider links, or native ad-serving endpoints. All features remain free, and existing supporter activation and recovery remain compatible. The upstream release downloads linked below are unchanged and do not include these local modifications.
+> **Personal-use build:** this source checkout has advertising removed and the optional paid supporter/ad-free license system removed. There is no sponsor gateway, banners, ad-provider links, checkout, entitlement server, or paid tier — every feature is free. The upstream release downloads linked below are unchanged and do not include these local modifications.
 
 This checkout also defaults to **5 TB per week** of combined uploads and downloads (5 TiB, or 5120 GiB in Settings), resetting Monday. Saved quotas at the old 250 GiB default are upgraded without clearing usage; other custom quotas remain unchanged. Telegram's own restrictions still apply.
 
@@ -58,7 +57,7 @@ Large local files now use automatic multipart upload and verified download reass
 | **Desktop integrations** | Folder Sync, local REST API, WebDAV, local share links, tray controls, and native notifications |
 | **Privacy** | Local configuration and caches, opt-in crash reporting, loopback-only local servers, and no separate file relay |
 | **Languages** | English and Spanish only; unsupported saved or system languages fall back to English |
-| **Price** | Every feature is free and this source checkout has no ads; existing supporter licenses and recovery remain supported |
+| **Price** | Every feature is free; no ads, no paid tier, no license server |
 
 ## Download and install
 
@@ -150,7 +149,7 @@ Some media depends on operating-system codec support or FFmpeg. Supported protec
 - Native Telegram message links for files in public channels.
 - An opt-in desktop REST API for programmatic file, folder, bulk, storage, thumbnail, and media operations.
 - Opt-in desktop WebDAV access for mounting Telegram Drive in compatible file managers.
-- Optional, passphrase-encrypted settings backup through the user's own Telegram Saved Messages. Credentials, API/WebDAV keys, supporter activation, proxy details, and file data are excluded.
+- Optional, passphrase-encrypted settings backup through the user's own Telegram Saved Messages. Credentials, API/WebDAV keys, proxy details, and file data are excluded.
 
 > [!NOTE]
 > REST, WebDAV, and Telegram Drive share links are served by the running desktop application. They are not hosted public internet links. Keep the app open, do not forward its local ports, and protect every generated password, key, and capability URL.
@@ -248,7 +247,6 @@ Desktop video cards and list rows show poster thumbnails, using a decoded frame 
 - The REST API stores only a hash of its generated key; the plaintext key is shown once.
 - WebDAV capability links are shown once and can be revoked by regeneration.
 - Proxy credentials use the operating system's secure credential manager.
-- Optional supporter verification receives no Telegram credentials or file activity and does not create a purchaser email profile.
 
 Read the complete [Privacy Policy](PRIVACY.md), [WebDAV guide](WEBDAV_GUIDE.md), and [REST API reference](REST_API_Documentation.md).
 
@@ -258,19 +256,9 @@ Telegram Drive supports **English** and **Spanish** only. Settings offers these 
 
 The application, native notifications, tray menus, and local share-password pages use the same two-language policy. Spanish grammar, legal-copy, and real-device review remain owner acceptance work; historical localization measurements are retained in [the locale review](Docs/LOCALIZATION_BUDGET_REVIEW.md).
 
-## Optional $5 lifetime ad-free supporter license
+## Every feature is free
 
-This section describes the upstream license contract, retained for existing purchasers. No license is needed to remove ads in this modified source checkout because the advertising feature itself has been removed. Upstream supported desktop and Android builds offer an optional **$5.00 USD Lifetime Ad-Free Supporter License** that removes sponsor placements on up to three supported Windows, macOS, Linux, or Android devices in total after one verified PayPal payment. Every feature remains free.
-
-- It is a one-time purchase, **not a subscription**.
-- Existing purchasers are not required to pay again after normal application updates.
-- Active and offline-grace entitlements keep sponsor placements hidden.
-- Reinstallation or another device can be restored with the recovery code, subject to the three-device allowance.
-- Checkout is available only inside **Settings → Privacy → Supporter**.
-- Payment does not create a Telegram Drive account or purchaser email profile.
-
-> [!WARNING]
-> Save the recovery code shown after activation. Payment alone does not bypass verification. Refunds are not automatic or guaranteed except where required by law. A refund, payment reversal, chargeback, or upheld dispute revokes the associated ad-free entitlement. Read the [Supporter Terms](SUPPORTER_TERMS.md) before paying.
+There is no paid tier, subscription, license, or entitlement check. Uploading, downloading, streaming, encryption, Folder Sync, sharing, the local REST API and WebDAV, and every other feature are available without payment, and this checkout shows no advertisements.
 
 ## Android and Google TV (signed APK)
 
@@ -313,22 +301,18 @@ Do not expose these ports to a LAN or the internet. See the [REST API endpoint r
 | Document | Purpose |
 | --- | --- |
 | [Changelog](CHANGELOG.md) | Release notes, compatibility information, and upgrade history |
-| [Privacy Policy](PRIVACY.md) | Local data, Telegram data flow, crash reporting, sponsors, sharing, and supporter privacy |
+| [Privacy Policy](PRIVACY.md) | Local data, Telegram data flow, crash reporting, and sharing |
 | [Security Policy](SECURITY.md) | Private vulnerability reporting, redaction guidance, and responsible testing boundaries |
 | [Folder Sync guide](SYNC_GUIDE.md) | Sync safety model, limits, conflict resolution, and integration behavior |
 | [WebDAV guide](WEBDAV_GUIDE.md) | Setup instructions for macOS, Windows, and Linux clients |
 | [REST API reference](REST_API_Documentation.md) | Authentication, endpoints, request examples, and error responses |
 | [Linux packaging guide](Docs/LINUX_PACKAGING.md) | Linux formats, Arch installation, rendering safe mode, diagnostics, and release safeguards |
 | [Linux/Arch implementation plan](Docs/LINUX_ARCH_IMPLEMENTATION_PLAN.md) | Design decisions, compatibility rules, release gates, acceptance matrix, and rollback |
-| [Supporter Terms](SUPPORTER_TERMS.md) | Activation, recovery, device allowance, refunds, availability, and privacy |
 
 ### Maintainer and release documentation
 
 | Document | Purpose |
 | --- | --- |
-| [Supporter license invariants](SUPPORTER_LICENSE_INVARIANTS.md) | Protected $5 lifetime-license compatibility contract and required verification |
-| [Supporter service operations](SUPPORTER_SERVICE.md) | Worker, PayPal, D1, secure configuration, and release checks |
-| [Supporter backup and recovery](SUPPORTER_BACKUP_RECOVERY.md) | D1 backup provisioning, restore drills, and production recovery |
 | [Android and Google TV release runbook](Docs/ANDROID_SIDELOAD_RELEASE.md) | Signing, packaging, acceptance, and sideload-release checks |
 | [Desktop code signing](Docs/CODE_SIGNING.md) | macOS notarization and Windows Authenticode settings, and first-signed-release acceptance |
 
@@ -398,24 +382,6 @@ The application is built with Tauri 2, Rust, React 19, TypeScript, Tailwind CSS 
 - Use [GitHub Discussions](https://github.com/caamer20/Telegram-Drive/discussions) for questions, ideas, and general feedback.
 - Never include Telegram credentials, session data, payment identifiers, recovery codes, encryption keys, private filenames, or file contents in a public report.
 - For a sensitive security report, follow the private-disclosure guidance in the [Security Policy](SECURITY.md).
-
-Direct cryptocurrency tips help support development but **do not** activate the lifetime ad-free entitlement:
-
-<div align="center">
-
-<a href="litecoin:ltc1q6wkr5ac4u0pxx4hx7xgwn0gsaku25ws0df73rp">
-  <img src="https://img.shields.io/badge/Donate-LTC-345D9D?style=for-the-badge&logo=litecoin&logoColor=white" alt="Donate Litecoin">
-</a>
-
-`ltc1q6wkr5ac4u0pxx4hx7xgwn0gsaku25ws0df73rp`
-
-<a href="bitcoin:bc1q5pt7m2fk6w0dzsnf6vvd5k6nw5k44785286ujy">
-  <img src="https://img.shields.io/badge/Donate-BTC-F7931A?style=for-the-badge&logo=bitcoin&logoColor=white" alt="Donate Bitcoin">
-</a>
-
-`bc1q5pt7m2fk6w0dzsnf6vvd5k6nw5k44785286ujy`
-
-</div>
 
 ---
 

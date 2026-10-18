@@ -17,7 +17,7 @@ The original plan was not safe to execute verbatim.
 
 ```mermaid
 flowchart TD
-    Tag[Version tag] --> Verify[Frontend, Rust, Worker, supporter-contract, and release gates]
+    Tag[Version tag] --> Verify[Frontend, Rust, and release gates]
     Verify --> Draft[Create draft GitHub release]
     Draft --> Tauri[Tauri platform matrix]
     Tauri --> AppImage[Signed AppImage uploaded unchanged]
@@ -48,7 +48,7 @@ flowchart TD
 - Preserve the existing `linuxRenderingFix` setting and default so upgrades remain compatible.
 - Honor `XDG_DATA_HOME` when locating the existing settings file.
 - Keep the normal native `.deb`, `.rpm`, and pacman rendering path on distribution WebKitGTK defaults.
-- Keep application identifier, app-data paths, secure credential service/account names, supporter token format, recovery behavior, price, lifetime entitlement, ad suppression, and three-device allowance unchanged.
+- Keep the application identifier, app-data paths, and secure credential service/account names unchanged.
 - Package only system-owned files under `/usr`; never package or remove user data.
 - Let pacman own updates for `.pkg.tar.zst` installations.
 - Do not publish to AUR until an intended license file is checked in and publication is explicitly authorized.
@@ -116,10 +116,10 @@ Manual release-candidate gates:
 - the GPU/driver family from the original failure report, including proprietary NVIDIA if applicable;
 - at least one X11 session;
 - AppImage and pacman package launch, resize, sign-in, file browsing, previews/media, accessibility bridge, tray, and update check;
-- install a previous Arch package, activate/restore a supporter entitlement, install the candidate with pacman, and confirm activation and recovery remain intact.
+- install a previous Arch package, install the candidate with pacman, and confirm the session, settings and encrypted vault remain intact.
 
 ## Rollback
 
 If the AppImage fallback regresses, disable the existing Linux Rendering Fix preference or launch with an explicit reviewed WebKit variable; native packages are unaffected by the automatic policy. If the Arch package regresses, keep the release draft, remove no user data, correct the package recipe, and rebuild from the unchanged verified `.deb`. If a problem escapes publication, install the previous package with pacman and retain the application data and secure credential identifiers.
 
-No AUR repository, live payment, production Worker, D1 data, signing key, supporter entitlement, or published GitHub release was changed while executing this plan.
+No AUR repository, signing key, or published GitHub release was changed while executing this plan.

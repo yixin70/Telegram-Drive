@@ -65,7 +65,7 @@ test('sign-out cancellation and failure preserve files; successful retry clears 
   await expect(page.getByRole('heading', { name: 'QR-first secure sign in', exact: true })).toBeVisible();
   const stores = await page.evaluate(() => (window as any).__desktopTest.stores);
   expect(stores['config.json'].api_id).toBeUndefined();
-  expect(stores['settings.json'].supporter_activation).toBe('preserve-existing-license');
+  expect(stores['settings.json'].legacy_setting_probe).toBe('preserve-existing-value');
 });
 
 test('sign-out tells the user when Telegram did not confirm that the session ended', async ({ page }) => {
