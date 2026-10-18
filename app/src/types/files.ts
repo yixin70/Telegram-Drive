@@ -8,6 +8,8 @@ export interface TelegramFile {
   created_at?: string;
   type?: 'folder' | 'file';
   folder_id?: number | null;
+  /** Presentation only; mutations always use folder_id and message identity. */
+  folder_path?: string;
   encryption?: FileEncryptionInfo;
   encryption_state?: EncryptionState;
   mime_type?: string;
@@ -37,7 +39,7 @@ export interface StorageInsightResult {
 export interface TelegramFolder {
   id: number;
   name: string;
-  parent_id?: number;
+  parent_id?: number | null;
   username?: string;
   /** Whether the channel has a public username set. */
   is_public?: boolean;

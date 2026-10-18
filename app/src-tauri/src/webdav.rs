@@ -24,9 +24,7 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::bandwidth::{BandwidthManager, BandwidthReservation};
 use crate::commands::utils::{media_size, resolve_peer};
-use crate::commands::{
-    create_folder_inner, delete_folder_inner, rename_folder_inner, TelegramState,
-};
+use crate::commands::{rename_folder_inner, TelegramState};
 use crate::vpn_optimizer::NetworkConfig;
 use crate::workspace::AccountGuard;
 
@@ -1068,8 +1066,13 @@ impl DavFileSystem for TelegramDavFs {
                 return Err(FsError::Exists);
             }
             let name = validate_portable_name(segments[0])?;
-            let client = self.client().await?;
-            create_folder_inner(&name, &client, &self.state.peer_cache)
+            let account = self.account()?;
+            let root = account.root.clone();
+            let db = tokio::task::spawn_blocking(move || crate::db::init_db_at(&root))
+                .await
+                .map_err(|_| FsError::GeneralFailure)?
+                .map_err(inventory_error)?;
+            crate::commands::fs::create_folder_scoped(name, None, &account, &self.state, db)
                 .await
                 .map_err(inventory_error)?;
             self.invalidate("/").await;
@@ -1101,8 +1104,13 @@ impl DavFileSystem for TelegramDavFs {
             {
                 return Err(FsError::Exists);
             }
-            let client = self.client().await?;
-            delete_folder_inner(folder_id, &client, &self.state.peer_cache)
+            let account = self.account()?;
+            let root = account.root.clone();
+            let db = tokio::task::spawn_blocking(move || crate::db::init_db_at(&root))
+                .await
+                .map_err(|_| FsError::GeneralFailure)?
+                .map_err(inventory_error)?;
+            crate::commands::fs::delete_folder_scoped(folder_id, &account, &self.state, db)
                 .await
                 .map_err(inventory_error)?;
             self.invalidate("/").await;

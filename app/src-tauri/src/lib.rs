@@ -105,6 +105,7 @@ pub mod db;
 mod db_migrations;
 pub mod file_inventory;
 pub mod fmp4_remux;
+pub mod folder_hierarchy;
 pub mod folder_layout;
 pub mod jni_cache;
 mod local_cors;
@@ -1405,6 +1406,9 @@ pub(crate) fn invoke_handler(
         commands::cmd_download_file,
         commands::cmd_move_files,
         commands::cmd_create_folder,
+        folder_hierarchy::cmd_move_folder,
+        folder_hierarchy::cmd_folder_hierarchy_backup,
+        folder_hierarchy::cmd_sync_folder_hierarchy,
         commands::cmd_delete_folder,
         commands::cmd_rename_folder,
         commands::cmd_rename_file,

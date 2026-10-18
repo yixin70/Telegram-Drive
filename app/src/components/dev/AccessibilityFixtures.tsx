@@ -7,6 +7,7 @@ import { FileExplorer } from '../desktop/dashboard/FileExplorer';
 import { SettingsModal } from '../desktop/dashboard/SettingsModal';
 import { ShareDialog } from '../desktop/dashboard/ShareDialog';
 import { BottomNavBar } from '../mobile/BottomNavBar';
+import MobileDashboard from '../mobile/MobileDashboard';
 import type { TelegramFile, TelegramFolder } from '../../types';
 
 const file: TelegramFile = {
@@ -66,6 +67,7 @@ export default function AccessibilityFixtures() {
     </main>
   );
 
+  if (fixture === 'mobile-folders') return <MobileDashboard />;
   if (fixture === 'locale-arrays') return <LocalizationArraysBrowserFixture />;
 
   if (fixture === 'runtime-copy') return <RuntimeCopyBrowserFixture />;

@@ -6,6 +6,7 @@ import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { ActionPopover, ActionItem } from './ActionPopover';
 import { TelegramFile, TelegramFolder } from '../../types';
 import i18n from '../../i18n';
+import { folderPath } from '../../services/folderHierarchy';
 
 interface TouchFileListProps {
   files: TelegramFile[];
@@ -392,7 +393,7 @@ export function TouchFileList({ files, isLoading, onDownload, onDelete, onPrevie
                         onClick={() => { onBulkMove(folder.id); setShowMovePicker(false); }}
                         className="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-telegram-subtext hover:bg-white/5 transition-all duration-200"
                       >
-                        📁 {folder.name}
+                        📁 {folderPath(folders ?? [], folder.id)}
                       </button>
                     ))}
                   {folders.filter(f => f.id !== activeFolderId).length === 0 && (

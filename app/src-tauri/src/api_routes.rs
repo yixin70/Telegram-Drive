@@ -2,9 +2,9 @@ use crate::api_catalog::{self, ApiFile, CatalogError};
 use crate::bandwidth::{BandwidthManager, BandwidthReservation};
 use crate::commands::fs::verify_forwarded_messages;
 use crate::commands::preview::THUMBNAIL_EXTS;
+use crate::commands::rename_folder_inner;
 use crate::commands::utils::{map_error, media_size, resolve_peer};
 use crate::commands::TelegramState;
-use crate::commands::{create_folder_inner, delete_folder_inner, rename_folder_inner};
 use crate::crypto::policy::TELEGRAM_MAX_FILE_SIZE;
 use crate::models::FolderMetadata;
 use crate::vpn_optimizer::NetworkConfig;
@@ -1908,7 +1908,21 @@ async fn api_create_folder(
         return json_error("ACCOUNT_CHANGED", &error, 409);
     }
     api_catalog::invalidate_cached(account.owner);
-    let response = match create_folder_inner(&body.name, &client, &tg_state.peer_cache).await {
+    let _ = client;
+    let root = account.root.clone();
+    let db = match tokio::task::spawn_blocking(move || crate::db::init_db_at(&root)).await {
+        Ok(Ok(db)) => db,
+        _ => return json_error("CREATE_FOLDER_FAILED", "Folder metadata unavailable", 503),
+    };
+    let response = match crate::commands::fs::create_folder_scoped(
+        body.name.clone(),
+        None,
+        &account,
+        tg_state.get_ref(),
+        db,
+    )
+    .await
+    {
         Ok(folder) => HttpResponse::Ok().json(folder),
         Err(e) => json_error("CREATE_FOLDER_FAILED", &e, 500),
     };
@@ -1975,7 +1989,20 @@ async fn api_delete_folder(
     if let Some(error) = api_scope_error(&account) {
         return error;
     }
-    let response = match delete_folder_inner(folder_id, &client, &tg_state.peer_cache).await {
+    let _ = client;
+    let root = account.root.clone();
+    let db = match tokio::task::spawn_blocking(move || crate::db::init_db_at(&root)).await {
+        Ok(Ok(db)) => db,
+        _ => return json_error("DELETE_FOLDER_FAILED", "Folder metadata unavailable", 503),
+    };
+    let response = match crate::commands::fs::delete_folder_scoped(
+        folder_id,
+        &account,
+        tg_state.get_ref(),
+        db,
+    )
+    .await
+    {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "success": true })),
         Err(e) => json_error("DELETE_FOLDER_FAILED", &e, 500),
     };

@@ -1655,9 +1655,12 @@ impl Driver {
             | "text_read"
             | "text_replace"
             | "read_envelope" => self.dispatch_crypto(request).await,
-            "folder_create" | "folder_delete" | "folder_rename" | "folder_layout"
-            | "folder_scan" | "group_create" | "folder_assign" | "folder_sign_out"
-            | "folder_rows" | "seed_folder_row" => self.dispatch_folders(request).await,
+            "hierarchy_sync" | "hierarchy_move" | "hierarchy_delete" | "hierarchy_backup"
+            | "hierarchy_restore" | "folder_create" | "folder_delete" | "folder_rename"
+            | "folder_layout" | "folder_scan" | "group_create" | "folder_assign"
+            | "folder_sign_out" | "folder_rows" | "seed_folder_row" => {
+                self.dispatch_folders(request).await
+            }
             "staging_root" | "log_start" | "log_emit" | "startup_failure_message" => {
                 self.dispatch_diagnostics(request).await
             }
@@ -4610,6 +4613,88 @@ impl Driver {
 
     async fn dispatch_folders(&mut self, request: Value) -> Result<Value, String> {
         match text(&request, "command")? {
+            "hierarchy_sync" | "hierarchy_move" | "hierarchy_delete" | "hierarchy_backup"
+            | "hierarchy_restore" => {
+                let account =
+                    crate::workspace::AccountGuard::open(&self.root, request["owner"].as_str())?;
+                let db = crate::db::init_db_at(&self.root)?;
+                if request["command"] == "hierarchy_sync" {
+                    // Only the Telegram boundary is controlled. SQLite, migrations,
+                    // account guards, replay, outbox and process restart are real.
+                    struct Remote {
+                        path: PathBuf,
+                        lost_reply: bool,
+                        read_fails: bool,
+                    }
+                    impl crate::folder_hierarchy::Transport for Remote {
+                        async fn read(&self) -> Result<Vec<String>, String> {
+                            if self.read_fails {
+                                return Err("Controlled incomplete remote read".into());
+                            }
+                            match std::fs::read(&self.path) {
+                                Ok(bytes) => serde_json::from_slice(&bytes).map_err(error),
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                    Ok(Vec::new())
+                                }
+                                Err(e) => Err(error(e)),
+                            }
+                        }
+                        async fn publish(&self, payload: String) -> Result<(), String> {
+                            let mut messages = self.read().await?;
+                            messages.push(payload);
+                            std::fs::write(
+                                &self.path,
+                                serde_json::to_vec(&messages).map_err(error)?,
+                            )
+                            .map_err(error)?;
+                            if self.lost_reply {
+                                return Err("Controlled lost publish reply".into());
+                            }
+                            Ok(())
+                        }
+                    }
+                    let remote = Remote {
+                        path: self.root.join("hierarchy-remote.json"),
+                        lost_reply: request["lostReply"] == true,
+                        read_fails: request["readFails"] == true,
+                    };
+                    return serde_json::to_value(
+                        crate::folder_hierarchy::synchronize(&account, db, &remote).await?,
+                    )
+                    .map_err(error);
+                }
+                crate::db::with_connection(db, move |conn| {
+                    let id = request["id"].as_i64().unwrap_or_default();
+                    match request["command"].as_str().unwrap_or_default() {
+                        "hierarchy_move" => serde_json::to_value(crate::folder_hierarchy::move_at(
+                            conn,
+                            &account,
+                            id,
+                            request["parent"].as_i64(),
+                            request["order"].as_i64().unwrap_or_default() as i32,
+                        )?)
+                        .map_err(error),
+                        "hierarchy_delete" => {
+                            crate::folder_hierarchy::transaction(conn, &account, || {
+                                crate::folder_hierarchy::ensure_leaf(conn, id)
+                            })?;
+                            crate::folder_hierarchy::deleted_at(conn, &account, id)?;
+                            Ok(json!(true))
+                        }
+                        "hierarchy_restore" => {
+                            serde_json::to_value(crate::folder_hierarchy::import_at(
+                                conn,
+                                &account,
+                                text(&request, "body")?,
+                                request["apply"] == true,
+                            )?)
+                            .map_err(error)
+                        }
+                        _ => Ok(json!(crate::folder_hierarchy::export_at(conn, &account)?)),
+                    }
+                })
+                .await
+            }
             "folder_create" | "folder_delete" | "folder_rename" => {
                 // Production folder commands against a state with no Telegram
                 // client; they must fail without touching the local database.

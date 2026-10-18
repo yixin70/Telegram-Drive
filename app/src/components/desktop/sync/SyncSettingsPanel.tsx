@@ -168,7 +168,7 @@ export function SyncSettingsPanel() {
       <div className="grid gap-3 sm:grid-cols-2">
         <button type="button" disabled={busy || editingId !== null} onClick={() => void chooseFolder().catch(error => toast.error(userFacingError(error, t)))} className="quiet-control min-w-0 border border-app-border px-3 py-2 text-start text-xs text-app-text disabled:opacity-60" aria-label={t('settings.sync.select_folder')} title={selectedPath ?? undefined}><span className="block truncate">{selectedPath ?? t('settings.sync.add_folder')}</span></button>
         <select value={channelId} disabled={busy || editingId !== null} onChange={event => setChannelId(event.target.value ? Number(event.target.value) : '')} aria-label={t('settings.sync.select_channel')} className="app-select quiet-control border border-app-border bg-app-surface px-3 py-2 text-xs text-app-text disabled:opacity-60">
-          <option value="">{t('settings.sync.select_channel')}</option>{folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+          <option value="">{t('settings.sync.select_channel')}</option>{folders.map(folder => <option key={folder.id} value={folder.id}>{folderPath(folders, folder.id)}</option>)}
           {editingPair && !folders.some(folder => folder.id === editingPair.channelId) && <option value={editingPair.channelId}>{editingPair.label ?? editingPair.channelId}</option>}
         </select>
       </div>
@@ -206,3 +206,4 @@ export function SyncSettingsPanel() {
     </div>
   </section>;
 }
+import { folderPath } from '../../../services/folderHierarchy';

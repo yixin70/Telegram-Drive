@@ -44,7 +44,7 @@ export async function desktopFixture(page: Page, options: {
   await page.route(`http://localhost:${options.streamingPort ?? 14201}/**`, route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><p>Offline media fixture</p>' }));
   await page.addInitScript(options => {
     const stores = JSON.parse(localStorage.getItem('desktop-e2e-stores') || 'null') ?? {
-      'config.json': { api_id: options.signedOut ? undefined : '12345', foldersLastSyncedAt: Date.now(), activeFolderId: 9, ad_gateway_passed: options.gatewaySeen ?? true },
+      'config.json': { api_id: options.signedOut ? undefined : '12345', 'foldersLastSyncedAt:101': Date.now(), 'activeFolderId:101': 9, ad_gateway_passed: options.gatewaySeen ?? true },
       'settings.json': { settings: { crashReportingEnabled: false, crashReportingConsentSeen: true, driveTourSeen: true, language: 'en', viewMode: 'list', ...(options.settings ?? {}) }, legacy_setting_probe: 'preserve-existing-value' },
     };
     const persist = () => localStorage.setItem('desktop-e2e-stores', JSON.stringify(stores));
@@ -55,6 +55,10 @@ export async function desktopFixture(page: Page, options: {
     const fileGate = new Promise<void>(resolve => { releaseFiles = resolve; });
     let releaseThumbnails: (() => void) | undefined;
     const thumbnailGate = new Promise<void>(resolve => { releaseThumbnails = resolve; });
+    let releaseHierarchy: (() => void) | undefined;
+    const hierarchyGate = new Promise<void>(resolve => { releaseHierarchy = resolve; });
+    let releaseCreateFolder: (() => void) | undefined;
+    const createFolderGate = new Promise<void>(resolve => { releaseCreateFolder = resolve; });
     let releaseVaultUnlock: (() => void) | undefined;
     const vaultUnlockGate = new Promise<void>(resolve => { releaseVaultUnlock = resolve; });
     let releaseSearch:(()=>void)|undefined;const searchGate=new Promise<void>(resolve=>{releaseSearch=resolve;});
@@ -67,6 +71,12 @@ export async function desktopFixture(page: Page, options: {
     const textGate = new Promise<void>(resolve => { releaseText = resolve; });
     const state = {
       textContent: options.textContent, textMessageId: 88,
+      hierarchyFolders: [{ id: 9, name: 'Photos', display_order: 0, parent_id: null }] as any[],
+      hierarchyFails: false,
+      holdHierarchy: false, hierarchyHeld: false,
+      releaseHierarchy: () => { state.holdHierarchy = false; releaseHierarchy?.(); },
+      holdCreateFolder: false,
+      releaseCreateFolder: () => { state.holdCreateFolder = false; releaseCreateFolder?.(); },
       textSaveFails: false, holdTextRead: options.holdTextRead ?? false,
       releaseText: () => { state.holdTextRead = false; releaseText?.(); },
       notes: JSON.parse(sessionStorage.getItem('desktop-e2e-native-notes') || '{}') as Record<string, {text: string; revision: number}>,
@@ -140,8 +150,9 @@ export async function desktopFixture(page: Page, options: {
             if (args.password === 'incorrect-fixture-password') throw new Error('That two-step verification password is incorrect. Check it and try again.');
             return { success: true };
           }
-          if (command === 'cmd_get_android_transfer_environment') return {isTelevision: options.isTelevision ?? false};
-          if (command === 'cmd_check_connection' || command === 'cmd_is_network_available') return true;
+          if (command === 'cmd_get_android_transfer_environment') return {isTelevision: options.isTelevision ?? false, connected: true};
+          if (command === 'cmd_get_android_playback_history') return [];
+          if (command === 'cmd_check_connection' || command === 'cmd_is_network_available' || command === 'cmd_get_android_network_status') return true;
           if (command === 'cmd_search_local') {
             const owner=state.owner;
             if(args.ownerId!==owner)throw new Error('ACCOUNT_CHANGED');
@@ -184,7 +195,22 @@ export async function desktopFixture(page: Page, options: {
             if (args.action === 'import') return {added: 0, replaced: 1, unchanged: 0};
             return true;
           }
-          if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return [{ id: 9, name: 'Photos', file_count: 1 }];
+          if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return state.hierarchyFolders;
+          if (command === 'cmd_sync_folder_hierarchy' || command === 'cmd_move_folder') {
+            if (args.ownerId !== state.owner) throw new Error('ACCOUNT_CHANGED');
+            if (state.hierarchyFails && command === 'cmd_sync_folder_hierarchy') throw new Error('Controlled offline hierarchy transport');
+            if (command === 'cmd_move_folder') state.hierarchyFolders = state.hierarchyFolders.map(f => f.id === args.folderId ? { ...f, parent_id: args.parentId, display_order: args.displayOrder } : f);
+            const folders = state.hierarchyFolders.map(folder => ({ ...folder }));
+            if (command === 'cmd_sync_folder_hierarchy' && state.holdHierarchy) { state.hierarchyHeld = true; await hierarchyGate; }
+            return { folders, pending: command === 'cmd_move_folder' ? 1 : 0, conflicts: 0, needs_scan: false };
+          }
+          if (command === 'cmd_create_folder') {
+            if (state.holdCreateFolder) await createFolderGate;
+            const folder = { id: Math.max(9, ...state.hierarchyFolders.map(f => f.id)) + 1, name: args.name, parent_id: args.parentId, display_order: 0 };
+            state.hierarchyFolders.push(folder);
+            return folder;
+          }
+          if (command === 'cmd_delete_folder') { state.hierarchyFolders = state.hierarchyFolders.filter(f => f.id !== args.folderId); return true; }
           // Folder Sync: settings and mappings are kept by this fixture; the
           // plan a preview returns is a stand-in for the native planner.
           if (command === 'cmd_get_sync_settings') return state.sync.settings;

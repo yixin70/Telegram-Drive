@@ -1,5 +1,6 @@
 import { clearImageMemoryCaches } from '../../services/imagePreviewCache';
 import { sourceFolder } from '../../services/fileIdentity';
+import { folderPath } from '../../services/folderHierarchy';
 import { lazy, Suspense, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {NotesAccountContext} from '../../context/NotesAccountContext';
 import { ORGANIZE_FILES_EVENT } from '../../services/workspace';
@@ -22,7 +23,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
-import { TelegramFile, BandwidthStats, type SmartView, type StorageInsightResult } from '../../types';
+import { TelegramFile, TelegramFolder, BandwidthStats, type SmartView, type StorageInsightResult } from '../../types';
 import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, isTextFile, copyToClipboard } from '../../utils';
 
 // Components
@@ -30,7 +31,6 @@ import { Sidebar } from './dashboard/Sidebar';
 import { TopBar } from './dashboard/TopBar';
 import { FileExplorer, type SortDirection, type SortField } from './dashboard/FileExplorer';
 import { TransferCenter } from './dashboard/TransferCenter';
-import { MoveToFolderModal } from './dashboard/MoveToFolderModal';
 import { ExternalDropBlocker } from './dashboard/ExternalDropBlocker';
 import type { SettingsTab } from './dashboard/SettingsModal';
 import { RenameFolderModal } from './dashboard/RenameFolderModal';
@@ -59,6 +59,9 @@ import { getAdjacentPreview, previewFileKey, samePreviewFile as sameFile } from 
 import i18n from '../../i18n';
 
 const LazyNotesHost = lazy(() => import('./dashboard/FileNoteButtonContent').then(module => ({default: module.FileNotesHost})));
+const FolderNavigation = lazy(() => import('../FolderNavigation').then(module => ({ default: module.FolderNavigation })));
+const FolderHierarchyBackup = lazy(() => import('../FolderHierarchyBackup').then(module => ({ default: module.FolderHierarchyBackup })));
+const MoveToFolderModal = lazy(() => import('./dashboard/MoveToFolderModal').then(module => ({ default: module.MoveToFolderModal })));
 const LazyShareDialog = lazy(() => import('./dashboard/ShareDialog').then(module => ({ default: module.ShareDialog })));
 const LazyPreviewModal = lazy(() => import('./dashboard/PreviewModal').then((module) => ({ default: module.PreviewModal })));
 const LazyMediaPlayer = lazy(() => import('./dashboard/MediaPlayer').then((module) => ({ default: module.MediaPlayer })));
@@ -86,7 +89,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite,
         handleCreateGroup, handleDeleteGroup, handleUpdateGroup, handleAssignFolderToGroup,
         handleReorderFolders, handleUpdateGroupOrder,
-        accountId,
+        accountId, handleMoveFolder, hierarchyStatus, hierarchyError, hierarchyConflicts,
     } = useTelegramConnection(onLogout);
 
 
@@ -128,13 +131,24 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [showHelp, setShowHelp] = useState(false);
     const [createFolderRequest, setCreateFolderRequest] = useState(0);
     const [activeSmartView, setActiveSmartView] = useState<SmartView | null>('recents');
+    const [folderOverview, setFolderOverview] = useState(false);
+    const [movingFolder, setMovingFolder] = useState<TelegramFolder | null>(null);
+    const navigateFolder = (id: number | null, overview = false) => {
+        setFolderOverview(overview);
+        setActiveSmartView(null);
+        setSelectedIds([]);
+        setSearchTerm('');
+        setSearchFilters(DEFAULT_SEARCH_FILTERS);
+        void setActiveFolderId(id);
+    };
+    useEffect(() => { setMovingFolder(null); setFolderOverview(false); }, [accountId]);
     const [insightSummary, setInsightSummary] = useState<{ scope: string; count: number; complete: boolean } | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [searchFilters, setSearchFilters] = useState<FileSearchFilters>(DEFAULT_SEARCH_FILTERS);
     const { results: searchResults, isSearching, reply: searchReply, error: searchError } = useGlobalFileSearch(searchTerm, searchFilters, accountId);
     const [folderSyncProgress, setFolderSyncProgress] = useState({ active: false, count: 0 });
     const fileLoadSequenceRef = useRef(0);
-    const fileLoadScope = JSON.stringify([accountId, activeSmartView, activeFolderId]);
+    const fileLoadScope = JSON.stringify([accountId, activeSmartView, activeFolderId, folderOverview]);
     const fileLoadScopeRef = useRef({ key: fileLoadScope, generation: 0 });
     if (fileLoadScopeRef.current.key !== fileLoadScope) {
         fileLoadScopeRef.current = { key: fileLoadScope, generation: fileLoadScopeRef.current.generation + 1 };
@@ -144,7 +158,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         return () => { fileLoadSequenceRef.current++; };
     }, [fileLoadScope]);
     useEffect(() => {
-        if (!accountId || activeSmartView) return;
+        if (!accountId || activeSmartView || folderOverview) return;
         let disposed = false;
         const touch = () => {
             void invoke<boolean>('cmd_touch_file_inventory', { ownerId: accountId, folderId: activeFolderId }).then(present => {
@@ -154,7 +168,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         touch();
         const timer = window.setInterval(touch, 60_000);
         return () => { disposed = true; window.clearInterval(timer); };
-    }, [accountId, activeFolderId, activeSmartView, queryClient]);
+    }, [accountId, activeFolderId, activeSmartView, folderOverview, queryClient]);
     useEffect(() => {
         let disposed = false;
         let stop: (() => void) | undefined;
@@ -302,17 +316,18 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onProgress: setFolderSyncProgress,
             });
         },
-        enabled: !!store && !!accountId,
+        enabled: !!store && !!accountId && !folderOverview,
         staleTime: 5 * 60_000,
         refetchOnWindowFocus: false,
         refetchOnReconnect: false,
     });
 
     const displayedFiles = useMemo(() => {
-        if (searchFilters.scope === 'all') return searchResults;
-        return filterAndRankFiles(allFiles, searchTerm, searchFilters);
-    }, [allFiles, searchResults, searchTerm, searchFilters]);
-    const isCrossFolderView = activeSmartView !== null
+        const files = searchFilters.scope === 'all' ? searchResults : filterAndRankFiles(allFiles, searchTerm, searchFilters);
+        return files.map(file => activeSmartView !== null || searchFilters.scope === 'all'
+            ? { ...file, folder_path: file.folder_id != null ? folderPath(folders, file.folder_id) : t('common.saved_messages') } : file);
+    }, [allFiles, searchResults, searchTerm, searchFilters, folders, activeSmartView, t]);
+    const isCrossFolderView = folderOverview || activeSmartView !== null
         || searchFilters.scope === 'all';
     useEffect(() => { if (isCrossFolderView) setSelectedIds([]); }, [isCrossFolderView]);
 
@@ -706,6 +721,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             if (overKind === 'sidebar-folder') {
                 const overFolderId = over.data.current?.folderId;
                 if (typeof overFolderId !== 'number' || draggedFolderId === overFolderId) return;
+                if ((folders.find(f => f.id === draggedFolderId)?.parent_id ?? null) !== (folders.find(f => f.id === overFolderId)?.parent_id ?? null)) return;
                 const oldIndex = folders.findIndex(folder => folder.id === draggedFolderId);
                 const newIndex = folders.findIndex(folder => folder.id === overFolderId);
                 if (oldIndex !== -1 && newIndex !== -1) {
@@ -729,8 +745,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
     const currentFolderName = activeFolderId === null
         ? t('common.saved_messages')
-        : folders.find(f => f.id === activeFolderId)?.name || t('common.folders');
-    const currentViewName = activeSmartView
+        : folderPath(folders, activeFolderId) || t('common.folders');
+    const currentViewName = folderOverview ? t('hierarchy.folders') : activeSmartView
         ? ({
             recents: t('common.recents'),
             favorites: t('common.favorites'),
@@ -800,14 +816,14 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
             <ExternalDropBlocker
                 currentFolderName={currentViewName}
-                enabled={isConnected}
+                enabled={isConnected && !folderOverview}
                 onFilesDropped={handleDropUpload}
                 onUploadClick={handleManualUpload}
             />
 
             <AnimatePresence>
                 {showMoveModal && moveRequest && (
-                    <MoveToFolderModal
+                    <Suspense fallback={null}><MoveToFolderModal
                         folders={folders}
                         fileName={moveFileTarget?.name}
                         onClose={() => setMoveRequest(current => current === moveRequest ? null : current)}
@@ -820,7 +836,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         }}
                         activeFolderId={sourceFolder(moveRequest.files[0], activeFolderId)}
                         key={`move:${moveRequest.ownerId}`}
-                    />
+                    /></Suspense>
                 )}
                 {playingFile && (
                     <LazyFeatureBoundary key={`media:${previewFileKey(playingFile)}`}>
@@ -863,11 +879,16 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             </AnimatePresence>
 
             <Sidebar
+                hierarchyStatus={hierarchyStatus}
+                hierarchyError={hierarchyError}
                 accountId={accountId}
                 folders={folders}
                 groups={groups}
                 activeFolderId={activeFolderId}
-                setActiveFolderId={setActiveFolderId}
+                setActiveFolderId={id => navigateFolder(id)}
+                overview={folderOverview}
+                onOverview={() => navigateFolder(null, true)}
+                onMoveFolder={setMovingFolder}
                 onDelete={handleFolderDelete}
                 onRename={(id, name) => setRenameFolder({ id, name })}
                 onToggleVisibility={async (id, _name, isPublic) => {
@@ -899,12 +920,12 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onDeleteGroup={handleDeleteGroup}
                 createFolderRequest={createFolderRequest}
                 activeSmartView={activeSmartView}
-                onSmartViewChange={setActiveSmartView}
+                onSmartViewChange={view => { setFolderOverview(false); setActiveSmartView(view); }}
             />
 
             <section aria-label={currentViewName} className="flex min-w-0 flex-1 flex-col">
                 <div className="desktop-chrome-row justify-end"><button type="button" onClick={() => setWorkspaceKeys([])} className="quiet-control flex h-8 items-center gap-2 px-3 text-ui font-medium text-app-accent hover:bg-app-hover"><Files className="h-4 w-4" />{t('workspace.title')}</button></div>
-                <TopBar
+                {!folderOverview && <TopBar
                     currentFolderName={currentViewName}
                     selectedIds={selectedIds}
                     onShowMoveModal={handleOpenBulkMove}
@@ -930,7 +951,9 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onNewFolderClick={() => setCreateFolderRequest((value) => value + 1)}
                     onShowShortcuts={() => setShowShortcuts(true)}
                     onShowHelp={() => setShowHelp(true)}
-                />
+                />}
+                {!activeSmartView && <Suspense fallback={null}><FolderNavigation folders={folders} folderId={activeFolderId} overview={folderOverview} onNavigate={navigateFolder} onCreate={() => setCreateFolderRequest(value => value + 1)} onMove={setMovingFolder} status={hierarchyStatus} error={hierarchyError} conflicts={hierarchyConflicts} /></Suspense>}
+                {folderOverview && <Suspense fallback={null}><FolderHierarchyBackup ownerId={accountId} onChanged={() => void handleSyncFolders(true)} /></Suspense>}
                 {(searchTerm.trim().length > 0 || searchFilters.type !== 'all' || searchFilters.size !== 'any' || searchFilters.date !== 'any') && (
                     <div className="px-3 pb-0 pt-3">
                         <h2 className="text-ui font-medium text-app-text-secondary">
@@ -941,7 +964,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 {insightSummary?.scope === fileLoadScope && !insightSummary.complete && <p role="status" className="px-3 text-xs text-app-text-secondary">{t('workspace.search_partial', { count: insightSummary.count })}</p>}
                 {searchError && <p role="alert" className="px-3 text-xs text-app-danger">{t('workspace.error_operation')}</p>}
                 {searchReply && <p role="status" className="px-3 text-xs text-app-text-secondary">{t(searchReply.complete ? 'workspace.search_complete' : 'workspace.search_partial', { count: searchReply.total })}{searchReply.offline ? ` · ${t('settings.offline')}` : ''}</p>}
-                <FileExplorer
+                {!folderOverview && <FileExplorer
                     key={accountId ?? 'signed-out'}
                     folders={folders}
                     files={displayedFiles}
@@ -969,10 +992,14 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onTogglePinned={(file) => void updateActivityFlag(file, 'pinned')}
                     syncProgress={folderSyncProgress}
                     selectionDisabled={isCrossFolderView}
-                />
+                />}
             </section>
+            {movingFolder && <Suspense fallback={null}><MoveToFolderModal folders={folders} movingFolderId={movingFolder.id} activeFolderId={movingFolder.parent_id ?? null} onClose={() => setMovingFolder(null)} onSelect={async parent => {
+                try { await handleMoveFolder(movingFolder.id, parent); setMovingFolder(null); }
+                catch (error) { toast.error(String(error)); }
+            }} /></Suspense>}
 
-            {workspaceKeys !== null && <LazyFeatureBoundary><LazyWorkspaceHub folders={folders} initialKeys={workspaceKeys} onClose={() => setWorkspaceKeys(null)} onOpen={(file, orderedFiles, localPath) => handlePreview(file, orderedFiles, localPath)} onFolder={id => { setWorkspaceKeys(null); setActiveSmartView(null); setActiveFolderId(id); }} /></LazyFeatureBoundary>}
+            {workspaceKeys !== null && <LazyFeatureBoundary><LazyWorkspaceHub folders={folders} initialKeys={workspaceKeys} onClose={() => setWorkspaceKeys(null)} onOpen={(file, orderedFiles, localPath) => handlePreview(file, orderedFiles, localPath)} onFolder={id => { setWorkspaceKeys(null); navigateFolder(id); }} /></LazyFeatureBoundary>}
 
             {previewFile && (
                 <LazyFeatureBoundary key={`preview:${previewFileKey(previewFile)}`}>

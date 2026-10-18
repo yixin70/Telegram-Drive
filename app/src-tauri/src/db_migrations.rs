@@ -3,7 +3,7 @@ use sqlite::{Connection, State};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-const APPLICATION_SCHEMA_VERSION: i64 = 4;
+const APPLICATION_SCHEMA_VERSION: i64 = 5;
 const BASELINE_SCHEMA_VERSION: i64 = 1;
 const ENCRYPTION_SCHEMA_VERSION: i64 = 3;
 const BASELINE_NAME: &str = "baseline_known_schema";
@@ -33,6 +33,7 @@ const KNOWN_TABLES: &[&str] = &[
     "file_inventory",
     "file_inventory_state",
     "folder_metadata",
+    "folder_hierarchy_ops",
     "groups",
     "schema_version",
     "shared_links",
@@ -564,6 +565,49 @@ pub fn install_share_ownership(conn: &Connection) -> Result<(), String> {
 
 pub fn sync_migration_record() -> (&'static str, String) {
     (SYNC_MIGRATION_NAME, sync_migration_checksum())
+}
+
+/// The operation log is account-keyed even while the visible layout tables are swapped.
+pub fn install_folder_hierarchy(conn: &Connection) -> Result<(), String> {
+    const DEFINITION: &str = "5:folder_hierarchy:parent_id;owner,op_id,payload,published:v1";
+    let checksum = format!("{:x}", Sha256::digest(DEFINITION.as_bytes()));
+    let mut record = conn
+        .prepare("SELECT checksum FROM app_schema_migrations WHERE version=5")
+        .map_err(|e| e.to_string())?;
+    if record.next().map_err(|e| e.to_string())? == State::Row {
+        if record.read::<String, _>(0).map_err(|e| e.to_string())? != checksum {
+            return Err("Folder hierarchy migration does not match this build".into());
+        }
+        validate_columns(conn, "folder_metadata", &["parent_id"])?;
+        return validate_columns(
+            conn,
+            "folder_hierarchy_ops",
+            &["owner", "op_id", "payload", "published"],
+        );
+    }
+    drop(record);
+    conn.execute("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+    let result = (|| {
+        conn.execute("ALTER TABLE folder_metadata ADD COLUMN parent_id INTEGER; CREATE INDEX idx_folder_parent ON folder_metadata(parent_id); CREATE TABLE folder_hierarchy_ops(owner INTEGER NOT NULL, op_id TEXT NOT NULL, payload TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(owner,op_id));").map_err(|e| e.to_string())?;
+        let mut insert = conn
+            .prepare("INSERT INTO app_schema_migrations VALUES(5,'folder_hierarchy',?,?,?)")
+            .map_err(|e| e.to_string())?;
+        insert
+            .bind((1, checksum.as_str()))
+            .map_err(|e| e.to_string())?;
+        insert
+            .bind((2, chrono::Utc::now().timestamp()))
+            .map_err(|e| e.to_string())?;
+        insert
+            .bind((3, env!("CARGO_PKG_VERSION")))
+            .map_err(|e| e.to_string())?;
+        insert.next().map_err(|e| e.to_string())?;
+        conn.execute("COMMIT").map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = conn.execute("ROLLBACK");
+    }
+    result
 }
 
 pub fn file_inventory_migration_record() -> (&'static str, String) {

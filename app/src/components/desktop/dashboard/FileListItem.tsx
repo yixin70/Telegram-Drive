@@ -95,6 +95,7 @@ export function FileListItem({
             <div className="flex min-w-0 items-center text-ui font-medium text-app-text">
                 <div className="min-w-0 truncate">
                 <span>{file.name}</span>
+                {file.folder_path && <span title={file.folder_path} className="min-w-0 truncate text-metadata text-app-text-secondary">{file.folder_path}</span>}
                 <EncryptionBadge state={file.encryption_state ?? 'plain'} className="ms-1.5 align-middle" />
                 <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
                 <CachedQualityBadges variants={cachedVariants} className="inline-flex items-center gap-0.5 ml-1.5" />

@@ -54,7 +54,11 @@ struct Backend {
 const NATIVE_FIXTURE_STARTUP: Duration = Duration::from_secs(120);
 impl Backend {
     fn start(root: &Path) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_native-e2e-driver"));
+        // An alternate, freshly linked driver lets Windows journeys run without
+        // replacing the executable held open by another long-running suite.
+        let driver = std::env::var_os("NATIVE_E2E_DRIVER")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_native-e2e-driver").into());
+        let mut command = Command::new(driver);
         if root.join(".video-upload-fixture").exists() {
             let scratch = root.join("video-upload-scratch");
             command
@@ -765,11 +769,13 @@ fn native_ipc_folder_refresh_and_file_listing_survive_a_windows_sized_stack() {
     let mut app = Backend::start(&fixture.0);
     for _ in 0..3 {
         let folders = app.request(json!({"command":"cmd_scan_folders", "payload":{}}));
-        if cfg!(debug_assertions) {
-            assert_eq!(folders, json!({"ok":true,"value":[]}));
-        } else {
-            assert_eq!(folders, json!({"ok":false,"error":"Client not connected"}));
-        }
+        // The isolated WebView has no signed-in account. Folder refresh must
+        // enforce that boundary even in a debug build, through the real IPC
+        // dispatcher and its asynchronous Windows-sized-stack path.
+        assert_eq!(
+            folders,
+            json!({"ok":false,"error":"ACCOUNT_REQUIRED: Sign in to open your workspace"})
+        );
         assert_eq!(
             app.ok(json!({"command":"cmd_get_encryption_settings", "payload":{}}))["default_mode"],
             "standard"
@@ -801,9 +807,9 @@ fn database_upgrade_preserves_legacy_rows_and_backup_across_process_restarts() {
         )).unwrap();
     drop(database);
     let mut app = Backend::start(&fixture.0);
-    assert_eq!(app.ok(json!({"command":"database"}))["version"], 4);
+    assert_eq!(app.ok(json!({"command":"database"}))["version"], 5);
     app.stop();
-    let backup = fixture.path("shares.db.pre-migration-v4");
+    let backup = fixture.path("shares.db.pre-migration-v5");
     assert!(backup.is_file());
     let backup_database = sqlite::open(backup).unwrap();
     let mut query = backup_database
@@ -819,7 +825,7 @@ fn database_upgrade_preserves_legacy_rows_and_backup_across_process_restarts() {
     drop(integrity);
     drop(backup_database);
     let mut app = Backend::start(&fixture.0);
-    assert_eq!(app.ok(json!({"command":"database"}))["version"], 4);
+    assert_eq!(app.ok(json!({"command":"database"}))["version"], 5);
     app.stop();
     let database = sqlite::open(fixture.path("shares.db")).unwrap();
     let mut query = database
@@ -2194,6 +2200,251 @@ fn each_account_keeps_its_own_folder_groups_across_switches_restarts_and_upgrade
     app.ok(json!({"command":"seed_account","owner":101}));
     assert_eq!(app.ok(json!({"command":"folder_layout"})), existing);
     app.stop();
+}
+
+#[test]
+fn hierarchy_offline_restart_two_devices_and_fresh_install_preserve_channel_identity() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let folders =
+        json!([{"id":11,"name":"Projects"},{"id":12,"name":"Website"},{"id":13,"name":"Photos"}]);
+    let mut device = Backend::start(&a.0);
+    device.ok(json!({"command":"seed_account","owner":101}));
+    device.ok(json!({"command":"folder_scan","folders":folders}));
+    let moved = device.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":7}));
+    assert_eq!(moved["pending"], 1);
+    assert!(device
+        .failure(json!({"command":"hierarchy_move","id":11,"parent":12}))
+        .contains("CYCLE"));
+    assert!(device
+        .failure(json!({"command":"hierarchy_delete","id":11}))
+        .contains("HAS_CHILDREN"));
+    device.stop();
+    let mut device = Backend::start(&a.0);
+    let backup = device.ok(json!({"command":"hierarchy_backup"}));
+    assert!(backup.as_str().unwrap().contains("\"parent\": 11"));
+    assert!(device
+        .failure(json!({"command":"hierarchy_sync","lostReply":true}))
+        .contains("lost publish reply"));
+    let after_lost_reply: Vec<String> =
+        serde_json::from_slice(&a.read("hierarchy-remote.json")).unwrap();
+    let synced = device.ok(json!({"command":"hierarchy_sync"}));
+    assert_eq!(synced["pending"], 0);
+    let remote: Vec<String> = serde_json::from_slice(&a.read("hierarchy-remote.json")).unwrap();
+    assert_eq!(
+        remote.iter().filter(|m| *m == &after_lost_reply[0]).count(),
+        1,
+        "lost reply must not duplicate publication"
+    );
+    device.stop();
+
+    // Fresh install uses complete remote history, not a local settings cache.
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    let mut second = Backend::start(&b.0);
+    second.ok(json!({"command":"seed_account","owner":101}));
+    second.ok(json!({"command":"folder_scan","folders":folders}));
+    let recovered = second.ok(json!({"command":"hierarchy_sync"}));
+    assert_eq!(recovered["folders"], synced["folders"]);
+    second.ok(json!({"command":"hierarchy_move","id":13,"parent":12}));
+    second.ok(json!({"command":"hierarchy_sync"}));
+    a.write("hierarchy-remote.json", b.read("hierarchy-remote.json"));
+    let mut first = Backend::start(&a.0);
+    let merged = first.ok(json!({"command":"hierarchy_sync"}));
+    let photos = merged["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == 13)
+        .unwrap();
+    assert_eq!(photos["parent_id"], 12);
+    first.ok(json!({"command":"seed_account","owner":202}));
+    assert!(first
+        .failure(json!({"command":"hierarchy_move","owner":"101","id":12,"parent":null}))
+        .contains("ACCOUNT"));
+    assert_eq!(
+        first.ok(json!({"command":"folder_layout"}))["folders"],
+        json!([])
+    );
+    assert!(first
+        .failure(json!({"command":"hierarchy_restore","body":backup,"apply":true}))
+        .contains("account"));
+    first.ok(json!({"command":"seed_account","owner":101}));
+    assert_eq!(
+        first.ok(json!({"command":"hierarchy_sync"}))["folders"],
+        merged["folders"]
+    );
+    first.stop();
+    second.stop();
+}
+
+#[test]
+fn hierarchy_concurrent_moves_cycles_deletion_races_and_backup_repair_converge() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let mut first = Backend::start(&a.0);
+    let mut second = Backend::start(&b.0);
+    let folders = json!([{"id":11,"name":"A"},{"id":12,"name":"B"},{"id":13,"name":"C"}]);
+    for app in [&mut first, &mut second] {
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"folder_scan","folders":folders}));
+    }
+    first.ok(json!({"command":"hierarchy_sync"}));
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    second.ok(json!({"command":"hierarchy_sync"}));
+    // Opposing concurrent moves create a cycle only when histories merge.
+    first.ok(json!({"command":"hierarchy_move","id":11,"parent":12}));
+    second.ok(json!({"command":"hierarchy_move","id":12,"parent":11}));
+    first.ok(json!({"command":"hierarchy_sync"}));
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    let merged_b = second.ok(json!({"command":"hierarchy_sync"}));
+    a.write("hierarchy-remote.json", b.read("hierarchy-remote.json"));
+    let merged_a = first.ok(json!({"command":"hierarchy_sync"}));
+    assert_eq!(merged_a["folders"], merged_b["folders"]);
+    assert!(merged_a["conflicts"].as_u64().unwrap() > 0);
+    let backup = first.ok(json!({"command":"hierarchy_backup"}));
+    a.write("hierarchy-remote.json", b"[]");
+    assert!(first
+        .failure(json!({"command":"hierarchy_sync"}))
+        .contains("RECOVERY"));
+    assert!(first
+        .failure(json!({"command":"hierarchy_sync","readFails":true}))
+        .contains("incomplete"));
+    let before = first.ok(json!({"command":"hierarchy_backup"}));
+    let mut invalid: Value = serde_json::from_str(backup.as_str().unwrap()).unwrap();
+    invalid["placements"] =
+        json!([{"folder":11,"parent":12,"order":0},{"folder":12,"parent":11,"order":0}]);
+    assert!(first
+        .failure(json!({"command":"hierarchy_restore","body":invalid.to_string(),"apply":true}))
+        .contains("CYCLE"));
+    assert_eq!(
+        first.ok(json!({"command":"hierarchy_backup"})),
+        before,
+        "invalid import is atomic"
+    );
+    first.ok(json!({"command":"hierarchy_restore","body":backup,"apply":false}));
+    assert_eq!(
+        first.ok(json!({"command":"hierarchy_backup"})),
+        before,
+        "preview has no mutations"
+    );
+    first.ok(json!({"command":"hierarchy_restore","body":backup,"apply":true}));
+    let repaired = first.ok(json!({"command":"hierarchy_sync"}));
+    assert_eq!(repaired["pending"], 0);
+    // Start the deletion race from the same repaired history. Otherwise this
+    // also races the explicit restore of folder 11, whose placement may win.
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    second.ok(json!({"command":"hierarchy_sync"}));
+    // A child created/moved on an offline device survives a parent's deletion.
+    first.ok(json!({"command":"hierarchy_move","id":13,"parent":null}));
+    first.ok(json!({"command":"hierarchy_delete","id":13}));
+    second.ok(json!({"command":"hierarchy_move","id":11,"parent":13}));
+    first.ok(json!({"command":"hierarchy_sync"}));
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    let survivor = second.ok(json!({"command":"hierarchy_sync"}));
+    let surviving = survivor["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == 11)
+        .unwrap();
+    assert_eq!(surviving["parent_id"], Value::Null);
+    assert!(!survivor["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["id"] == 13));
+    first.stop();
+    second.stop();
+}
+
+#[test]
+fn hierarchy_same_folder_conflicts_duplicate_delivery_and_corrupt_history_preserve_data() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    let mut first = Backend::start(&a.0);
+    let mut second = Backend::start(&b.0);
+    let folders = json!([{"id":11,"name":"Parent A"},{"id":12,"name":"Parent B"},{"id":13,"name":"Child"},{"id":14,"name":"Independent"}]);
+    for app in [&mut first, &mut second] {
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"folder_scan","folders":folders}));
+    }
+    first.ok(json!({"command":"hierarchy_sync"}));
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    second.ok(json!({"command":"hierarchy_sync"}));
+    first.ok(json!({"command":"hierarchy_move","id":13,"parent":11,"order":5}));
+    second.ok(json!({"command":"hierarchy_move","id":13,"parent":12,"order":7}));
+    second.ok(json!({"command":"hierarchy_move","id":14,"parent":12,"order":8}));
+    first.ok(json!({"command":"hierarchy_sync"}));
+    b.write("hierarchy-remote.json", a.read("hierarchy-remote.json"));
+    let merged = second.ok(json!({"command":"hierarchy_sync"}));
+    assert!(merged["conflicts"].as_u64().unwrap() > 0);
+    assert_eq!(merged["folders"].as_array().unwrap().len(), 4);
+    let independent = merged["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == 14)
+        .unwrap();
+    assert_eq!(independent["parent_id"], 12);
+    assert_eq!(independent["display_order"], 8);
+    // History order and duplicate Telegram delivery do not change the outcome.
+    let mut messages: Vec<String> =
+        serde_json::from_slice(&b.read("hierarchy-remote.json")).unwrap();
+    messages.reverse();
+    messages.extend(messages.clone());
+    let complete = serde_json::to_vec(&messages).unwrap();
+    a.write("hierarchy-remote.json", &complete);
+    assert_eq!(
+        first.ok(json!({"command":"hierarchy_sync"}))["folders"],
+        merged["folders"]
+    );
+    let before = first.ok(json!({"command":"hierarchy_backup"}));
+    messages.push("TDHIERARCHY:{broken".to_string());
+    a.write(
+        "hierarchy-remote.json",
+        serde_json::to_vec(&messages).unwrap(),
+    );
+    assert!(first
+        .failure(json!({"command":"hierarchy_sync"}))
+        .contains("RECOVERY"));
+    assert_eq!(first.ok(json!({"command":"hierarchy_backup"})), before);
+    messages.pop();
+    let mut unsupported: Value =
+        serde_json::from_str(messages[0].strip_prefix("TDHIERARCHY:").unwrap()).unwrap();
+    unsupported["version"] = json!(999);
+    messages.push(format!("TDHIERARCHY:{unsupported}"));
+    a.write(
+        "hierarchy-remote.json",
+        serde_json::to_vec(&messages).unwrap(),
+    );
+    assert!(first
+        .failure(json!({"command":"hierarchy_sync"}))
+        .contains("RECOVERY"));
+    assert_eq!(first.ok(json!({"command":"hierarchy_backup"})), before);
+    a.write("hierarchy-remote.json", complete);
+    assert_eq!(
+        first.ok(json!({"command":"hierarchy_sync"}))["folders"],
+        merged["folders"]
+    );
+    // A stale installation must preview imported tombstones, not show a folder
+    // that apply will hide. Preview still leaves its cache and outbox untouched.
+    first.ok(json!({"command":"hierarchy_delete","id":14}));
+    let recovery = first.ok(json!({"command":"hierarchy_backup"}));
+    let stale_before = second.ok(json!({"command":"hierarchy_backup"}));
+    let preview = second.ok(json!({"command":"hierarchy_restore","body":recovery,"apply":false}));
+    assert!(!preview["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["id"] == 14));
+    assert_eq!(
+        second.ok(json!({"command":"hierarchy_backup"})),
+        stale_before
+    );
+    let applied = second.ok(json!({"command":"hierarchy_restore","body":recovery,"apply":true}));
+    assert_eq!(applied["folders"], preview["folders"]);
+    first.stop();
+    second.stop();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

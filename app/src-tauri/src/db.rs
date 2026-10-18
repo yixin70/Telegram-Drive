@@ -399,6 +399,9 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
     retry_initialization_step("share ownership migration", || {
         db_migrations::install_share_ownership(&conn)
     })?;
+    retry_initialization_step("folder hierarchy migration", || {
+        db_migrations::install_folder_hierarchy(&conn)
+    })?;
 
     log::info!("SQLite database initialized successfully using sqlite crate.");
     Ok(Arc::new(Mutex::new(conn)))

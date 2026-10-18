@@ -151,6 +151,7 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
                     <h2 className="block w-full min-w-0 truncate text-ui font-medium" title={file.name}>{file.name}</h2>
                     <div className="file-card-metadata mt-0.5 flex h-4 w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
                         <p className={`shrink-0 text-metadata ${thumbnail ? 'text-white/70' : 'text-app-text-secondary'}`}>{file.sizeStr}</p>
+                        {file.folder_path && <span title={file.folder_path} className="min-w-0 truncate text-metadata">{file.folder_path}</span>}
                         <EncryptionBadge state={file.encryption_state ?? 'plain'} className="shrink-0" />
                         <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
                         <CachedQualityBadges variants={cachedVariants} className="inline-flex min-w-0 items-center gap-0.5 overflow-hidden" />

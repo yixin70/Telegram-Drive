@@ -1,5 +1,24 @@
 # End-to-end testing
 
+## Nested folders
+
+From `app/`, `npx playwright test tests/e2e/folder-hierarchy.spec.ts --workers=1`
+exercises contextual creation, breadcrumbs, safe folder moves, sync failure/retry,
+stale-response rejection and duplicate-create prevention. The touch journey mounts
+the real mobile component through a development-only route, not a native WebView.
+
+From the repository root,
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e hierarchy_ -- --test-threads=1`
+crosses child-process restart, real SQLite and two independent account stores with
+a controlled remote-message transport. It covers offline edits, fresh recovery,
+concurrent moves, cycles, duplicate/lost delivery, corrupt/incomplete history,
+deletion races and atomic backup preview/repair. It does not mutate live Telegram.
+See [NESTED_FOLDERS.md](Docs/NESTED_FOLDERS.md) for privacy and release boundaries.
+
+On Windows, do not replace executables used by another running suite. A separately
+linked test executable may select a separately linked driver through the test-only
+`NATIVE_E2E_DRIVER` environment variable; the default remains Cargo's driver path.
+
 ## Multipart deletion retries
 
 `cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e multipart_telegram_ -- --test-threads=1`

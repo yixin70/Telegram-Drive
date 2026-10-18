@@ -1,5 +1,5 @@
 import i18n from '../../../i18n';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, FileWarning, CalendarClock, Copy, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
@@ -14,9 +14,11 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { quietMetrics } from '../../../design/contracts';
-import { CreateFolderDialog } from './CreateFolderDialog';
+import { folderAncestors, folderChildren, folderPath } from '../../../services/folderHierarchy';
 import { SyncStatusBadge } from '../sync/SyncStatusBadge';
 import { VaultQuickUnlock } from './VaultQuickUnlock';
+
+const CreateFolderDialog = lazy(() => import('./CreateFolderDialog').then(module => ({ default: module.CreateFolderDialog })));
 
 const PRESET_COLORS = [
     '#3B82F6', // Blue
@@ -105,8 +107,13 @@ interface SidebarProps {
     onRename: (id: number, name: string) => void;
     onToggleVisibility: (id: number, name: string, isPublic: boolean) => void;
     onExportInvite: (id: number, name: string) => void;
-    onCreate: (name: string) => Promise<void>;
+    onCreate: (name: string, parentId?: number | null) => Promise<void>;
+    overview: boolean;
+    onOverview: () => void;
+    onMoveFolder: (folder: TelegramFolder) => void;
     isSyncing: boolean;
+    hierarchyStatus: string;
+    hierarchyError: string | null;
     isConnected: boolean;
     onSync: () => void;
     onLogout: () => void;
@@ -123,10 +130,12 @@ interface SidebarProps {
 export function Sidebar({
     accountId,
     folders, groups = [], activeFolderId, setActiveFolderId, onDelete, onRename, onToggleVisibility, onExportInvite, onCreate,
-    isSyncing, isConnected, onSync, onLogout, bandwidth,
+    isSyncing, hierarchyStatus, hierarchyError, isConnected, onSync, onLogout, bandwidth, overview, onOverview, onMoveFolder,
     onAssignFolderToGroup, onCreateGroup, onUpdateGroup, onDeleteGroup, createFolderRequest = 0, activeSmartView = null, onSmartViewChange
 }: SidebarProps) {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+    const [createParent, setCreateParent] = useState<number | null>(null);
+    const [expanded, setExpanded] = useState<Set<number>>(new Set());
     const { t } = useTranslation();
     const { settings, updateSetting } = useSettings();
 
@@ -138,8 +147,25 @@ export function Sidebar({
     const [groupColor, setGroupColor] = useState("#3B82F6");
 
     useEffect(() => {
-        if (createFolderRequest > 0) setShowNewFolderInput(true);
+        if (createFolderRequest > 0) { setCreateParent(activeSmartView || overview ? null : activeFolderId); setShowNewFolderInput(true); }
     }, [createFolderRequest]);
+    useEffect(() => {
+        setShowNewFolderInput(false);
+        setShowGroupEditor(false);
+        setEditingGroup(null);
+        setActiveGroupId('all');
+        try { setExpanded(new Set(JSON.parse(localStorage.getItem(`folder-tree:${accountId}`) ?? '[]'))); }
+        catch { setExpanded(new Set()); }
+    }, [accountId]);
+    useEffect(() => {
+        setExpanded(previous => new Set([...previous, ...folderAncestors(folders, activeFolderId).slice(0, -1).map(f => f.id)]));
+    }, [activeFolderId, folders]);
+    const toggleExpanded = (id: number) => setExpanded(previous => {
+        const next = new Set(previous);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        try { localStorage.setItem(`folder-tree:${accountId}`, JSON.stringify([...next])); } catch { /* optional UI preference */ }
+        return next;
+    });
 
     const handleSaveGroup = async () => {
         if (!groupName.trim()) return;
@@ -165,11 +191,19 @@ export function Sidebar({
         setGroupColor("#3B82F6");
     };
 
-    const filteredFolders = folders.filter(folder => {
+    const visibleRoots = folderChildren(folders, null).filter(folder => {
         if (settings.hideGroups || activeGroupId === 'all') return true;
         if (activeGroupId === null) return folder.group_id === null || folder.group_id === undefined;
         return folder.group_id === activeGroupId;
     });
+    const filteredFolders: Array<{ folder: TelegramFolder; depth: number }> = [];
+    const visit = (folder: TelegramFolder, depth: number, seen: Set<number>) => {
+        if (seen.has(folder.id)) return;
+        seen.add(folder.id);
+        filteredFolders.push({ folder, depth });
+        if (expanded.has(folder.id) && !settings.sidebarCollapsed) folderChildren(folders, folder.id).forEach(child => visit(child, depth + 1, seen));
+    };
+    visibleRoots.forEach(root => visit(root, 0, new Set()));
 
     return (
         <aside 
@@ -387,16 +421,18 @@ export function Sidebar({
                     <SidebarItem
                         icon={HardDrive}
                         label={t('common.saved_messages')}
-                        active={activeFolderId === null && !activeSmartView}
+                        active={activeFolderId === null && !activeSmartView && !overview}
                         onClick={() => { onSmartViewChange?.(null); setActiveFolderId(null); }}
                         folderId={null}
                         collapsed={settings.sidebarCollapsed}
                     />
+                    <button type="button" title={t('hierarchy.folders')} aria-current={overview ? 'page' : undefined} onClick={onOverview} className={`quiet-control flex h-8 w-full items-center gap-2 px-2.5 text-ui ${overview ? 'bg-app-selected text-app-accent' : 'text-app-text-secondary'}`}><Folder className="h-4 w-4 shrink-0" />{!settings.sidebarCollapsed && t('hierarchy.folders')}</button>
                     <SortableContext
-                        items={filteredFolders.map(folder => `folder-${folder.id}`)}
+                        items={filteredFolders.map(({ folder }) => `folder-${folder.id}`)}
                         strategy={verticalListSortingStrategy}
                     >
-                        {filteredFolders.map(folder => (
+                        {filteredFolders.map(({ folder, depth }) => (
+                            <div key={folder.id} style={{ paddingInlineStart: Math.min(depth, 6) * 12 }}>
                             <SidebarItem
                                 key={folder.id}
                                 icon={Folder}
@@ -407,12 +443,17 @@ export function Sidebar({
                                 onRename={() => onRename(folder.id, folder.name)}
                                 onToggleVisibility={() => onToggleVisibility(folder.id, folder.name, !!(folder.is_public || folder.username))}
                                 onExportInvite={() => onExportInvite(folder.id, folder.name)}
+                                onCreateChild={() => { setCreateParent(folder.id); setShowNewFolderInput(true); }}
+                                onMoveFolder={() => onMoveFolder(folder)}
+                                expanded={expanded.has(folder.id)}
+                                onToggleExpanded={folders.some(f => f.parent_id === folder.id) ? () => toggleExpanded(folder.id) : undefined}
                                 folderId={folder.id}
                                 isPublic={!!(folder.is_public || folder.username)}
                                 collapsed={settings.sidebarCollapsed}
                                 groups={groups}
                                 onAssignFolderToGroup={onAssignFolderToGroup}
                             />
+                            </div>
                         ))}
                     </SortableContext>
                 </nav>
@@ -420,7 +461,7 @@ export function Sidebar({
             {!settings.sidebarCollapsed && (
                 <div className="border-t border-app-border-subtle px-2 py-2">
                     <button
-                        onClick={() => setShowNewFolderInput(true)}
+                        onClick={() => { setCreateParent(activeSmartView || overview ? null : activeFolderId); setShowNewFolderInput(true); }}
                         className="quiet-control flex h-9 w-full items-center gap-2 border border-dashed border-app-border px-3 text-ui font-medium text-app-text-secondary hover:border-app-border-strong hover:text-app-text"
                     >
                         <Plus className="w-4 h-4" />
@@ -430,11 +471,12 @@ export function Sidebar({
             )}
 
             {showNewFolderInput && (
-                <CreateFolderDialog onClose={() => setShowNewFolderInput(false)} onCreate={onCreate} />
+                <Suspense fallback={null}><CreateFolderDialog destination={createParent === null ? t('hierarchy.root') : folderPath(folders, createParent)} onClose={() => setShowNewFolderInput(false)} onCreate={name => onCreate(name, createParent)} /></Suspense>
             )}
 
             <div className={`flex flex-col border-t border-app-border-subtle p-2 ${settings.sidebarCollapsed ? 'items-center gap-2' : 'gap-2'}`}>
                 <SyncStatusBadge collapsed={settings.sidebarCollapsed} />
+                {activeSmartView && <p role="status" title={hierarchyError ?? undefined} className={`text-xs text-app-text-secondary ${settings.sidebarCollapsed ? 'sr-only' : ''}`}>{t(`hierarchy.${hierarchyStatus}`)}</p>}
                 {settings.sidebarCollapsed ? (
                     <>
                         <div

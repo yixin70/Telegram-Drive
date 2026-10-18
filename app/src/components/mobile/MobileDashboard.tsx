@@ -32,6 +32,12 @@ import type { OfflineCacheStatus } from '../../types';
 import { evaluateAndroidTransferPolicy, type AndroidTransferEnvironment } from '../../services/androidTransferPolicy';
 import { effectiveVideoUploadMode } from '../../services/videoUploadMode';
 import i18n from '../../i18n';
+import { FolderNavigation } from '../FolderNavigation';
+import { FolderHierarchyBackup } from '../FolderHierarchyBackup';
+import { CreateFolderDialog } from '../desktop/dashboard/CreateFolderDialog';
+import { MoveToFolderModal } from '../desktop/dashboard/MoveToFolderModal';
+import { folderPath } from '../../services/folderHierarchy';
+import { fileQueryKey, refreshFolderFiles } from '../../services/fileListRefresh';
 
 const LazyHelpCenterDialog = lazy(() => import('../desktop/dashboard/HelpCenterDialog').then((module) => ({ default: module.HelpCenterDialog })));
 const LazyMobileMediaPlayer = lazy(() => import('./MobileMediaPlayer').then((module) => ({ default: module.MobileMediaPlayer })));
@@ -164,8 +170,21 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const {
     store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
     handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete,
-    handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite, accountId
+    handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite, accountId,
+    handleMoveFolder, hierarchyStatus, hierarchyError, hierarchyConflicts,
   } = useTelegramConnection(logoutHandler);
+  const [folderOverview, setFolderOverview] = useState(false);
+  const [movingFolder, setMovingFolder] = useState<TelegramFolder | null>(null);
+  const [createParent, setCreateParent] = useState<number | null | undefined>(undefined);
+  const fileScope = JSON.stringify([accountId, activeFolderId, folderOverview]);
+  const fileScopeRef = useRef(fileScope);
+  fileScopeRef.current = fileScope;
+  const navigateFolder = (id: number | null, overview = false) => {
+    setFolderOverview(overview);
+    void setActiveFolderId(id);
+    setIsSidebarOpen(false);
+  };
+  useEffect(() => { setMovingFolder(null); setCreateParent(undefined); setFolderOverview(false); }, [accountId]);
 
   const { data: androidTransferEnvironment } = useQuery({
     queryKey: ['android-transfer-environment'],
@@ -214,15 +233,15 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   ]);
 
   const {
-    uploadQueue, setUploadQueue, handleManualUpload, clearFinished: clearUploads,
+    uploadQueue, enqueueUploadItems, handleManualUpload, clearFinished: clearUploads,
     cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads,
     cancelItem: cancelUpload, retryItem: retryUpload,
-  } = useFileUpload(activeFolderId, store, transferAllowed, transferWaitingReason);
+  } = useFileUpload(activeFolderId, store, transferAllowed, transferWaitingReason, accountId ?? undefined);
   const {
     downloadQueue, queueDownload, queueBulkDownload, clearFinished: clearDownloads,
     cancelAll: cancelDownloads, pauseAll: pauseDownloads, resumeAll: resumeDownloads,
     cancelItem: cancelDownload, retryItem: retryDownload,
-  } = useFileDownload(store, transferAllowed, transferWaitingReason);
+  } = useFileDownload(store, transferAllowed, transferWaitingReason, accountId ?? undefined);
 
   const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
   const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
@@ -449,12 +468,19 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   });
 
   const handleUploadCachedFile = useCallback(async (entry: CachedFileEntry) => {
+    if (!accountId || folderOverview) return;
+    const scope = fileScopeRef.current;
     const tid = `cache-upload-${++transferIdCounter.current}-${Date.now()}`;
     setUploadingCacheFiles(prev => new Set(prev).add(entry.cached_path));
     try {
       const stagedPath = await invoke<string>('cmd_stage_android_upload', { path: entry.cached_path });
-      setUploadQueue(queue => [...queue, {
+      if (fileScopeRef.current !== scope) {
+        await invoke('cmd_delete_android_staged_upload', { path: stagedPath }).catch(() => undefined);
+        return;
+      }
+      await enqueueUploadItems([{
         id: tid,
+        ownerId: accountId,
         path: stagedPath,
         folderId: activeFolderId,
         status: 'pending',
@@ -474,7 +500,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         return next;
       });
     }
-  }, [activeFolderId, refetchCachedFiles, setUploadQueue, settings.videoUploadMode]);
+  }, [accountId, activeFolderId, folderOverview, refetchCachedFiles, enqueueUploadItems, settings.videoUploadMode]);
 
   const handleClearCachedFiles = useCallback(async () => {
     try {
@@ -490,32 +516,19 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
   // Real files loader
   const { data: allFiles = [], isLoading } = useQuery({
-    queryKey: ['files', activeFolderId],
-    queryFn: async () => {
-      let accumulatedFiles: any[] = [];
-      queryClient.setQueryData(['files', activeFolderId], []);
-
-      const unlisten = await listen<any>('folder-load-chunk', (event) => {
-        const payload = event.payload;
-        if (payload.folderId === activeFolderId) {
-          const newChunk = payload.files.map((f: any) => ({
-            ...f,
-            sizeStr: formatBytes(f.size),
-            type: f.icon_type || (f.name.endsWith('/') ? 'folder' : 'file')
-          }));
-          accumulatedFiles = [...accumulatedFiles, ...newChunk];
-          queryClient.setQueryData(['files', activeFolderId], accumulatedFiles);
-        }
+    queryKey: fileQueryKey(accountId, activeFolderId),
+    queryFn: async ({ signal }) => {
+      if (!accountId) return [];
+      const queryKey = fileQueryKey(accountId, activeFolderId);
+      return refreshFolderFiles({
+        ownerId: accountId, folderId: activeFolderId, requestId: crypto.randomUUID(), signal,
+        isCurrent: () => fileScopeRef.current === fileScope,
+        cachedFiles: queryClient.getQueryData<TelegramFile[]>(queryKey),
+        onFiles: files => queryClient.setQueryData(queryKey, files),
+        onProgress: () => undefined,
       });
-
-      try {
-        await invoke('cmd_get_files', { folderId: activeFolderId });
-        return accumulatedFiles;
-      } finally {
-        unlisten();
-      }
     },
-    enabled: !!store,
+    enabled: !!store && !!accountId && !folderOverview,
   });
 
   const { data: playbackHistory = [] } = useQuery({
@@ -543,8 +556,9 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   }, [activeFolderId, allFiles, playbackHistory]);
 
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  useEffect(() => { setSelectedIds([]); }, [fileScope]);
   const [fileRenames, setFileRenames] = useState<Map<number, string>>(new Map());
-  const { handleDelete: handleDeleteOp, handleBulkDelete, handleBulkDownload, handleBulkMove } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, allFiles, queueBulkDownload);
+  const { handleDelete: handleDeleteOp, handleBulkDelete, handleBulkDownload, handleBulkMove } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, allFiles, queueBulkDownload, accountId);
 
   const activeFolder = activeFolderId === null
     ? 'Saved Messages'
@@ -587,6 +601,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const buildFolderActions = useCallback((folder: TelegramFolder): ActionItem[] => {
     const isPublic = folder.is_public || !!folder.username;
     return [
+      { label: t('hierarchy.new_child'), icon: <Folder className="h-4 w-4" />, onClick: () => { setFolderActionMenu(null); setCreateParent(folder.id); } },
+      { label: t('hierarchy.move'), icon: <Folder className="h-4 w-4" />, onClick: () => { setFolderActionMenu(null); setMovingFolder(folder); } },
       {
         label: 'Rename',
         icon: <Pencil className="w-4 h-4" />,
@@ -612,7 +628,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         destructive: true,
       },
     ];
-  }, [handleFolderDelete, handleFolderVisibilityToggle, handleFolderShareInvite]);
+  }, [handleFolderDelete, handleFolderVisibilityToggle, handleFolderShareInvite, t]);
 
   const handleSelectAll = useCallback(() => {
     if (selectedIds.length === allFiles.length) {
@@ -785,11 +801,18 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       if (isSidebarOpen) { setIsSidebarOpen(false); return true; }
       if (selectedIds.length > 0) { setSelectedIds([]); return true; }
       if (activeTab !== 'files') { setActiveTab('files'); return true; }
-      if (activeFolderId !== null) { setActiveFolderId(null); return true; }
+      if (movingFolder) { setMovingFolder(null); return true; }
+      if (createParent !== undefined) { setCreateParent(undefined); return true; }
+      if (activeFolderId !== null) {
+        const parent = folders.find(f => f.id === activeFolderId)?.parent_id ?? null;
+        navigateFolder(parent, parent === null);
+        return true;
+      }
+      if (folderOverview) { setFolderOverview(false); return true; }
       return false;
     };
     return () => { delete androidWindow.__telegramDriveHandleAndroidBack; };
-  }, [activeFolderId, activeTab, bulkShareLinks, folderActionMenu, isAndroid, isSidebarOpen, pdfFile, playingFile, previewFile, textFile, renameFolder, selectedIds.length, setActiveFolderId, shareFile, showHelp]);
+  }, [activeFolderId, activeTab, bulkShareLinks, folderActionMenu, isAndroid, isSidebarOpen, pdfFile, playingFile, previewFile, textFile, renameFolder, selectedIds.length, setActiveFolderId, shareFile, showHelp, movingFolder, createParent, folderOverview, folders]);
 
   return (
     <div className={`absolute inset-0 flex flex-col bg-telegram-bg text-telegram-text overflow-hidden select-none font-sans ${isTelevision ? 'tv-shell' : ''}`}>
@@ -818,7 +841,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         {activeTab === 'files' && (
           <div className="space-y-4">
             {/* Folder Header Breadcrumb */}
-            <div className="flex items-center justify-between bg-telegram-hover/20 p-3 rounded-2xl border border-telegram-border/30">
+            {!folderOverview && <div className="flex items-center justify-between bg-telegram-hover/20 p-3 rounded-2xl border border-telegram-border/30">
               <div className="flex items-center gap-2.5">
                 <Folder className="w-5 h-5 text-telegram-primary" />
                 <span className="text-sm font-semibold truncate max-w-[150px]">{activeFolder}</span>
@@ -840,9 +863,11 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   {i18n.t("common.sync")}
                 </button>
               </div>
-            </div>
+            </div>}
+            <FolderNavigation folders={folders} folderId={activeFolderId} overview={folderOverview} onNavigate={navigateFolder} onCreate={() => setCreateParent(folderOverview ? null : activeFolderId)} onMove={setMovingFolder} status={hierarchyStatus} error={hierarchyError} conflicts={hierarchyConflicts} />
+            {folderOverview && <FolderHierarchyBackup ownerId={accountId} onChanged={() => void handleSyncFolders(true)} />}
 
-            {continueWatching.length > 0 && (
+            {!folderOverview && continueWatching.length > 0 && (
               <section className="rounded-2xl border border-telegram-border/30 bg-telegram-hover/20 p-3" aria-labelledby="continue-watching-title">
                 <h2 id="continue-watching-title" className="mb-2 text-[10px] font-bold uppercase tracking-wide text-telegram-primary">{i18n.t('playback.title')}</h2>
                 <div className="flex gap-2 overflow-x-auto pb-1">
@@ -858,7 +883,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             )}
 
             {/* Dynamic Real File List */}
-            <TouchFileList
+            {!folderOverview && <TouchFileList
               files={displayFiles}
               isLoading={isLoading && allFiles.length === 0}
               onDownload={handleDownload}
@@ -881,7 +906,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               activeFolderId={activeFolderId}
               scrollElementRef={scrollRootRef}
               disableVirtualization={isTelevision}
-            />
+            />}
           </div>
         )}
 
@@ -1446,9 +1471,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
         {/* Scrollable Folder List */}
         <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto min-h-0">
+          <button className="quiet-control min-h-11 w-full px-3 text-start text-sm text-app-accent" onClick={() => navigateFolder(null, true)}>{t('hierarchy.folders')}</button>
           <button
             onClick={() => {
-              setActiveFolderId(null);
+              navigateFolder(null);
               setIsSidebarOpen(false);
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 ${activeFolderId === null
@@ -1465,7 +1491,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             <div key={folder.id} className="flex items-center gap-1">
               <button
                 onClick={() => {
-                  setActiveFolderId(folder.id);
+                  navigateFolder(folder.id);
                   setIsSidebarOpen(false);
                 }}
                 className={`flex-1 text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 ${
@@ -1475,7 +1501,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 }`}
               >
                 <span className="flex items-center gap-1.5 max-w-[150px]">
-                  <span className="truncate">{folder.name}</span>
+                  <span className="truncate">{folderPath(folders, folder.id)}</span>
                   {isPublic ? (
                     <Globe className="w-3 h-3 text-emerald-400 flex-shrink-0" />
                   ) : (
@@ -1502,12 +1528,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         <div className="px-4 py-3 border-t border-telegram-border/30 space-y-3">
           <BandwidthWidget bandwidth={bandwidth ?? null} />
           <button
-            onClick={async () => {
-              const name = prompt(i18n.t('files.folder_name'));
-              if (name && name.trim()) {
-                await handleCreateFolder(name.trim());
-              }
-            }}
+            onClick={() => { setIsSidebarOpen(false); setCreateParent(folderOverview ? null : activeFolderId); }}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold text-telegram-subtext hover:text-telegram-text border border-dashed border-telegram-border/60 hover:bg-telegram-hover/20 transition-all duration-200"
           >
             + {i18n.t('common.create_folder')}
@@ -1520,6 +1541,11 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       </div>
 
       {/* Folder action popover (replaces swipe-to-reveal) */}
+      {createParent !== undefined && <CreateFolderDialog destination={createParent === null ? t('hierarchy.root') : folderPath(folders, createParent)} onClose={() => setCreateParent(undefined)} onCreate={name => handleCreateFolder(name, createParent)} />}
+      {movingFolder && <MoveToFolderModal folders={folders} movingFolderId={movingFolder.id} activeFolderId={movingFolder.parent_id ?? null} onClose={() => setMovingFolder(null)} onSelect={async parent => {
+        try { await handleMoveFolder(movingFolder.id, parent); setMovingFolder(null); }
+        catch (error) { toast.error(String(error)); }
+      }} />}
       {folderActionMenu && (
         <ActionPopover
           title={folderActionMenu.name}
@@ -1593,9 +1619,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         </div>
       )}
 
-      {shareFile && (
+      {shareFile && accountId && (
         <ShareDialog
           file={shareFile}
+          ownerId={accountId}
           onClose={() => setShareFile(null)}
           folders={folders}
           activeFolderId={activeFolderId}

@@ -96,7 +96,7 @@ Telegram Drive uses Telegram's MTProto API for authentication and file operation
 - **Saved Messages** appears as the main personal storage location.
 - Telegram **channels** created or selected by the app can appear as folders.
 - Transfers move directly between the application and Telegram.
-- Desktop metadata, settings, queues, sync state, thumbnails, and preview caches stay on the local device.
+- Desktop caches, queues, and local organization stay on the device. Folder parent links and sibling order automatically sync through minimal metadata in Saved Messages; optional settings backups are separate. See [nested folders and recovery](Docs/NESTED_FOLDERS.md).
 - Standard uploads are stored in Telegram in their normal form. Optional TDENC2 uploads are encrypted locally before transfer.
 
 The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encrypted files need additional envelope space, so their maximum original plaintext size is slightly lower.
@@ -111,7 +111,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 - Filename search, persistent sorting, multi-select, range selection, and bulk actions.
 - Upload, download, rename, copy, move, and delete workflows where Telegram permits them.
 - Drag-and-drop uploads and internal drag-and-drop organization.
-- Folder creation, rename, deletion, visibility controls, and custom local folder groups.
+- Nested channel-backed folders with breadcrumbs, contextual creation, metadata-only moves, automatic layout sync, safe parent-deletion guards, and optional layout backups. Visibility remains per channel; custom folder groups remain local. See [scope and limitations](Docs/NESTED_FOLDERS.md).
 - Whole-folder uploads with optional ZIP creation before transfer.
 - Remote URL uploads with progress, cancellation, retries, redirects, bounded size checks, and resumable ranges when supported by the source server.
 - Duplicate-file, empty-folder, media-metadata, and storage-insight tools through the local REST API.

@@ -1206,12 +1206,65 @@ fn disconnected_folder_stand_in(
 #[tauri::command]
 pub async fn cmd_create_folder(
     name: String,
+    parent_id: Option<i64>,
+    owner_id: Option<String>,
+    app: tauri::AppHandle,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
-    create_folder(name, state.inner(), db_pool.inner().clone()).await
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    create_folder_scoped(
+        name,
+        parent_id,
+        &account,
+        state.inner(),
+        db_pool.inner().clone(),
+    )
+    .await
 }
 
+pub(crate) async fn create_folder_scoped(
+    name: String,
+    parent: Option<i64>,
+    account: &crate::workspace::AccountGuard,
+    state: &TelegramState,
+    db: DbConnection,
+) -> Result<FolderMetadata, String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
+        return Err("Folder names must contain 1–120 characters without control characters".into());
+    }
+    let _gate = crate::folder_hierarchy::GATE.lock().await;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let captured = account.clone();
+    crate::db::with_connection(db.clone(), move |conn| {
+        crate::folder_hierarchy::transaction(conn, &captured, || {
+            crate::folder_hierarchy::check_parent(conn, 0, parent)
+        })
+    })
+    .await?;
+    account.validate()?;
+    let mut folder = create_folder_inner(name, &client, &state.peer_cache).await?;
+    account.validate().map_err(|e| format!("HIERARCHY_CREATED: Channel {} was created; refresh folders instead of retrying creation. {e}", folder.id))?;
+    folder.parent_id = parent;
+    let captured = account.clone();
+    let saved = folder.clone();
+    let snapshot = crate::db::with_connection(db, move |conn| crate::folder_hierarchy::created_at(conn, &captured, &saved, parent)).await
+        .map_err(|e| format!("HIERARCHY_CREATED: Channel {} was created; refresh folders instead of creating it again. Metadata save failed: {e}", folder.id))?;
+    Ok(snapshot
+        .folders
+        .into_iter()
+        .find(|f| f.id == folder.id)
+        .unwrap_or(folder))
+}
+
+#[cfg(feature = "native-e2e")]
 pub(crate) async fn create_folder(
     name: String,
     state: &TelegramState,
@@ -1300,12 +1353,55 @@ pub async fn delete_folder_inner(
 #[tauri::command]
 pub async fn cmd_delete_folder(
     folder_id: i64,
+    owner_id: Option<String>,
+    app: tauri::AppHandle,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
-    delete_folder(folder_id, state.inner(), db_pool.inner().clone()).await
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    delete_folder_scoped(folder_id, &account, state.inner(), db_pool.inner().clone()).await
 }
 
+pub(crate) async fn delete_folder_scoped(
+    folder_id: i64,
+    account: &crate::workspace::AccountGuard,
+    state: &TelegramState,
+    db: DbConnection,
+) -> Result<bool, String> {
+    let _gate = crate::folder_hierarchy::GATE.lock().await;
+    let snapshot = crate::folder_hierarchy::sync_locked(account, db.clone(), state).await?;
+    if snapshot.needs_scan {
+        return Err("Refresh folders before deleting; another device added folders".into());
+    }
+    let captured = account.clone();
+    crate::db::with_connection(db.clone(), move |conn| {
+        crate::folder_hierarchy::transaction(conn, &captured, || {
+            crate::folder_hierarchy::ensure_leaf(conn, folder_id)
+        })
+    })
+    .await?;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    delete_folder_inner(folder_id, &client, &state.peer_cache).await?;
+    account.validate()?;
+    let captured = account.clone();
+    crate::db::with_connection(db.clone(), move |conn| {
+        crate::folder_hierarchy::deleted_at(conn, &captured, folder_id)
+    })
+    .await?;
+    // Deletion already succeeded. An interrupted publish stays in the outbox.
+    if let Err(error) = crate::folder_hierarchy::sync_locked(account, db, state).await {
+        log::warn!("Folder deletion metadata is pending: {error}");
+    }
+    Ok(true)
+}
+
+#[cfg(feature = "native-e2e")]
 fn folder_stand_in(folder_id: i64, name: String) -> FolderMetadata {
     FolderMetadata {
         id: folder_id,
@@ -1318,6 +1414,7 @@ fn folder_stand_in(folder_id: i64, name: String) -> FolderMetadata {
     }
 }
 
+#[cfg(feature = "native-e2e")]
 pub(crate) async fn delete_folder(
     folder_id: i64,
     state: &TelegramState,
@@ -1383,14 +1480,46 @@ pub async fn rename_folder_inner(
 
 #[tauri::command]
 pub async fn cmd_rename_folder(
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     folder_id: i64,
     new_name: String,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
-    rename_folder(folder_id, new_name, state.inner(), db_pool.inner().clone()).await
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let _gate = crate::folder_hierarchy::GATE.lock().await;
+    let new_name = new_name.trim().to_string();
+    if new_name.is_empty()
+        || new_name.chars().count() > 120
+        || new_name.chars().any(char::is_control)
+    {
+        return Err("Folder names must contain 1–120 characters without control characters".into());
+    }
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    rename_folder_inner(folder_id, &new_name, &client, &state.peer_cache).await?;
+    crate::db::with_connection(db_pool.inner().clone(), move |conn| {
+        crate::folder_hierarchy::transaction(conn, &account, || {
+            let mut stmt = conn
+                .prepare("UPDATE folder_metadata SET name=? WHERE channel_id=?")
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, new_name.as_str()))
+                .map_err(|e| e.to_string())?;
+            stmt.bind((2, folder_id)).map_err(|e| e.to_string())?;
+            stmt.next().map_err(|e| e.to_string())?;
+            Ok(true)
+        })
+    })
+    .await
 }
 
+#[cfg(feature = "native-e2e")]
 pub(crate) async fn rename_folder(
     folder_id: i64,
     new_name: String,
@@ -5796,21 +5925,24 @@ pub async fn cmd_search_global(
 #[tauri::command]
 pub async fn cmd_scan_folders(
     app: tauri::AppHandle,
+    owner_id: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<Vec<FolderMetadata>, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let _hierarchy_gate = crate::folder_hierarchy::GATE.lock().await;
     let scan_started_at = std::time::Instant::now();
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() {
         // If not connected, return whatever is already in the database
-        return crate::commands::folder_groups::cmd_get_enriched_folders(app, db_pool).await;
+        return crate::commands::folder_groups::cmd_get_enriched_folders(app, owner_id, db_pool)
+            .await;
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
     // The scan merges into the signed-in account's own folder list. Without
     // this, one account's scan would prune another account's folders.
-    let account = file_mutation_account(&app, None)?;
     account.validate_client(&client).await?;
     let layout_scope = Some((account.root.clone(), Some(account.owner)));
     let scope_for_known = layout_scope.clone();
@@ -6216,13 +6348,20 @@ pub async fn cmd_delete_temp_zip(path: String, app: tauri::AppHandle) -> Result<
 /// When making private, the username is removed.
 #[tauri::command]
 pub async fn cmd_toggle_folder_visibility(
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     folder_id: i64,
     make_public: bool,
     desired_username: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let _gate = crate::folder_hierarchy::GATE.lock().await;
     let client_opt = { state.client.lock().await.clone() };
+    if let Some(client) = &client_opt {
+        account.validate_client(client).await?;
+    }
 
     let mut folder = if client_opt.is_none() {
         disconnected_folder_stand_in(
@@ -6351,6 +6490,7 @@ pub async fn cmd_toggle_folder_visibility(
             };
 
             log::info!("Setting channel {} username to '{}'", channel_id, username);
+            account.validate()?;
             client
                 .invoke(&tl::functions::channels::UpdateUsername {
                     channel: input_channel,
@@ -6371,6 +6511,7 @@ pub async fn cmd_toggle_folder_visibility(
         } else {
             // Make private: remove username
             log::info!("Removing username from channel {}", channel_id);
+            account.validate()?;
             client
                 .invoke(&tl::functions::channels::UpdateUsername {
                     channel: input_channel,
@@ -6395,8 +6536,8 @@ pub async fn cmd_toggle_folder_visibility(
     let folder_id_for_db = folder.id;
     let folder_username_for_db = folder.username.clone();
     let folder_is_public_for_db = folder.is_public;
-    let (group_id, display_order) =
-        crate::db::with_connection(db_pool.inner().clone(), move |conn| {
+    let (group_id, display_order, parent_id) =
+        crate::db::with_connection(db_pool.inner().clone(), move |conn| crate::folder_hierarchy::transaction(conn, &account, || {
             let mut stmt = conn
                 .prepare(
                     "UPDATE folder_metadata SET username = ?, is_public = ? WHERE channel_id = ?",
@@ -6412,7 +6553,7 @@ pub async fn cmd_toggle_folder_visibility(
 
             // Retrieve group_id and display_order from DB to ensure they are returned correctly
             let mut fm_stmt = conn
-                .prepare("SELECT group_id, display_order FROM folder_metadata WHERE channel_id = ?")
+                .prepare("SELECT group_id, display_order, parent_id FROM folder_metadata WHERE channel_id = ?")
                 .map_err(|e: sqlite::Error| e.to_string())?;
             fm_stmt
                 .bind((1, folder_id_for_db))
@@ -6427,13 +6568,15 @@ pub async fn cmd_toggle_folder_visibility(
                     .read::<i64, _>("display_order")
                     .map_err(|e: sqlite::Error| e.to_string())?
                     as i32;
-                return Ok((group_id, display_order));
+                let parent_id = fm_stmt.read::<Option<i64>, _>("parent_id").map_err(|e| e.to_string())?;
+                return Ok((group_id, display_order, parent_id));
             }
-            Ok((None, 0))
-        })
+            Ok((None, 0, None))
+        }))
         .await?;
     folder.group_id = group_id;
     folder.display_order = display_order;
+    folder.parent_id = parent_id;
 
     Ok(folder)
 }

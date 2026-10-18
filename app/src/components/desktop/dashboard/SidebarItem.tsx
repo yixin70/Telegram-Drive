@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { MoreVertical, Globe, Pencil, Trash2, EyeOff, Eye, Link } from 'lucide-react';
+import { MoreVertical, Globe, Pencil, Trash2, EyeOff, Eye, Link, ChevronRight, FolderInput, FolderPlus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -18,6 +18,10 @@ interface SidebarItemProps {
     onRename?: () => void;
     onToggleVisibility?: () => void;
     onExportInvite?: () => void;
+    onCreateChild?: () => void;
+    onMoveFolder?: () => void;
+    expanded?: boolean;
+    onToggleExpanded?: () => void;
     collapsed?: boolean;
     groups?: FolderGroup[];
     onAssignFolderToGroup?: (folderId: number, groupId: number | null) => void;
@@ -28,7 +32,7 @@ interface SidebarItemProps {
  */
 export function SidebarItem({
     icon: Icon, label, active = false, onClick, onDelete, folderId, isPublic, onRename, onToggleVisibility, onExportInvite, collapsed = false,
-    groups = [], onAssignFolderToGroup
+    groups = [], onAssignFolderToGroup, onCreateChild, onMoveFolder, expanded, onToggleExpanded
 }: SidebarItemProps) {
     const { t } = useTranslation();
 
@@ -95,6 +99,7 @@ export function SidebarItem({
                     : 'text-app-text-secondary hover:text-app-text'
                 }`}
         >
+            {!collapsed && onToggleExpanded && <button type="button" aria-expanded={expanded} aria-label={t(expanded ? 'hierarchy.collapse' : 'hierarchy.expand', { name: label })} className="quiet-control flex h-7 w-5 shrink-0 items-center justify-center" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleExpanded(); }}><ChevronRight className={`h-3 w-3 ${expanded ? 'rotate-90' : ''}`} /></button>}
             <Icon className={`h-4 w-4 flex-shrink-0 ${active || isFileDragOver ? 'text-app-accent' : ''}`} />
             {!collapsed && <span className="flex-1 truncate text-start">{label}</span>}
             {isFileDragOver && dragCount > 1 && (
@@ -142,6 +147,8 @@ export function SidebarItem({
                             {t('files.rename')}
                         </button>
                     )}
+                    {onCreateChild && <button className="quiet-menu-item min-h-10 gap-3 px-3 py-2" onClick={() => runAndClose(onCreateChild)}><FolderPlus className="h-4 w-4" />{t('hierarchy.new_child')}</button>}
+                    {onMoveFolder && <button className="quiet-menu-item min-h-10 gap-3 px-3 py-2" onClick={() => runAndClose(onMoveFolder)}><FolderInput className="h-4 w-4" />{t('hierarchy.move')}</button>}
 
                     {onToggleVisibility && (
                         <button
