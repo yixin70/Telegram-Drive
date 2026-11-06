@@ -5,6 +5,11 @@ const path = require('node:path');
 const appRoot = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
 
+if (['android', 'ios'].includes(args[0])) {
+  console.error('Telegram Drive supports only Windows; mobile builds are retired.');
+  process.exit(1);
+}
+
 function fail(message) {
   console.error(message);
   process.exit(1);

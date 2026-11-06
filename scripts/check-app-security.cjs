@@ -24,19 +24,18 @@ for (const [name, expected] of [['object-src', "'none'"], ['base-uri', "'self'"]
   const sources = directives.get(name);
   if (sources?.length !== 1 || sources[0] !== expected) throw new Error(`Invalid ${name} restriction.`);
 }
-const mobile = json('src-tauri/capabilities/mobile.json');
 const desktop = json('src-tauri/capabilities/default.json');
-if (mobile.platforms?.length !== 1 || mobile.platforms[0] !== 'android') {
-  throw new Error('Mobile capabilities must remain restricted to Android.');
+if (fs.existsSync(path.join(root, 'src-tauri/capabilities/mobile.json')) || config.bundle?.android) {
+  throw new Error('Retired Android build configuration must stay absent.');
 }
-if (desktop.platforms?.length !== 3 || !['linux', 'macOS', 'windows'].every(value => desktop.platforms.includes(value))) {
-  throw new Error('Desktop capabilities must remain restricted to desktop platforms.');
+if (desktop.platforms?.length !== 1 || desktop.platforms[0] !== 'windows') {
+  throw new Error('Application capabilities must remain Windows-only.');
 }
 if (!desktop.permissions?.includes('updater:default')) throw new Error('Signed desktop updater permission is required.');
-if (![mobile.identifier, desktop.identifier].every(value => config.app.security.capabilities.includes(value))) {
-  throw new Error('The application must declare its platform-specific capabilities.');
+if (JSON.stringify(config.app.security.capabilities) !== JSON.stringify([desktop.identifier])) {
+  throw new Error('The application must declare only its Windows capability.');
 }
-for (const capability of [mobile, desktop]) {
+for (const capability of [desktop]) {
   const opener = capability.permissions.find(value => value?.identifier === 'opener:allow-open-url');
   const schemes = (opener?.allow || []).map(value => value.url).sort();
   if (JSON.stringify(schemes) !== JSON.stringify(['http://*', 'https://*', 'mailto:*'])

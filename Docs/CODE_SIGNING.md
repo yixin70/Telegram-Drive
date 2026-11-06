@@ -1,5 +1,7 @@
 # Desktop Code Signing
 
+> Current desktop support is Windows only. macOS builds, notarization and Apple credential handling have been removed from CI. The macOS sections below are retained solely as historical reference; Windows Authenticode and updater-signature requirements remain active.
+
 The release workflow signs and notarizes desktop builds when signing credentials are present in the repository settings. When they are absent, the workflow prints a warning and produces the same unsigned builds as before. A platform with only some of its values set fails the release instead of publishing a build that is signed but not notarized.
 
 Signing changes only the code signature. The bundle identifier `com.cameronamer.telegramdrive`, the updater key, and the application's secure credential service and account names are not affected.

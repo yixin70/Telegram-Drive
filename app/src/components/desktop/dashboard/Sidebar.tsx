@@ -1,6 +1,6 @@
 import i18n from '../../../i18n';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, FileWarning, CalendarClock, Copy, Database } from 'lucide-react';
+import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
 import { BandwidthWidget } from './BandwidthWidget';
@@ -19,6 +19,10 @@ import { SyncStatusBadge } from '../sync/SyncStatusBadge';
 import { VaultQuickUnlock } from './VaultQuickUnlock';
 
 const CreateFolderDialog = lazy(() => import('./CreateFolderDialog').then(module => ({ default: module.CreateFolderDialog })));
+
+const FOLDER_INDENT = 20;
+// Center of the reserved disclosure slot: 10px row padding + half its 16px width.
+const FOLDER_GUIDE_START = 18;
 
 const PRESET_COLORS = [
     '#3B82F6', // Blue
@@ -196,14 +200,17 @@ export function Sidebar({
         if (activeGroupId === null) return folder.group_id === null || folder.group_id === undefined;
         return folder.group_id === activeGroupId;
     });
-    const filteredFolders: Array<{ folder: TelegramFolder; depth: number }> = [];
-    const visit = (folder: TelegramFolder, depth: number, seen: Set<number>) => {
+    const filteredFolders: Array<{ folder: TelegramFolder; branches: boolean[] }> = [];
+    const visit = (folder: TelegramFolder, branches: boolean[], seen: Set<number>) => {
         if (seen.has(folder.id)) return;
         seen.add(folder.id);
-        filteredFolders.push({ folder, depth });
-        if (expanded.has(folder.id) && !settings.sidebarCollapsed) folderChildren(folders, folder.id).forEach(child => visit(child, depth + 1, seen));
+        filteredFolders.push({ folder, branches });
+        if (expanded.has(folder.id) && !settings.sidebarCollapsed) {
+            const children = folderChildren(folders, folder.id);
+            children.forEach((child, index) => visit(child, [...branches, index === children.length - 1], seen));
+        }
     };
-    visibleRoots.forEach(root => visit(root, 0, new Set()));
+    visibleRoots.forEach(root => visit(root, [], new Set()));
 
     return (
         <aside 
@@ -399,24 +406,6 @@ export function Sidebar({
                             {!settings.sidebarCollapsed && <span>{label}</span>}
                         </button>
                     ))}
-                    {!settings.sidebarCollapsed && <p className="px-2.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-app-text-tertiary">{t('common.storage_insights')}</p>}
-                    {([
-                        ['large', FileWarning, t('common.large_files')],
-                        ['old', CalendarClock, t('common.old_files')],
-                        ['duplicates', Copy, t('common.duplicates')],
-                    ] as const).map(([view, Icon, label]) => (
-                        <button
-                            key={view}
-                            type="button"
-                            onClick={() => onSmartViewChange?.(view)}
-                            title={label}
-                            aria-current={activeSmartView === view ? 'page' : undefined}
-                            className={`quiet-control flex h-8 w-full items-center ${settings.sidebarCollapsed ? 'justify-center' : 'gap-2 px-2.5'} text-ui font-medium ${activeSmartView === view ? 'bg-app-selected text-app-accent' : 'text-app-text-secondary hover:text-app-text'}`}
-                        >
-                            <Icon className="h-4 w-4 shrink-0" />
-                            {!settings.sidebarCollapsed && <span>{label}</span>}
-                        </button>
-                    ))}
                     {!settings.sidebarCollapsed && <div className="my-2 h-px bg-app-border-subtle" />}
                     <SidebarItem
                         icon={HardDrive}
@@ -431,8 +420,25 @@ export function Sidebar({
                         items={filteredFolders.map(({ folder }) => `folder-${folder.id}`)}
                         strategy={verticalListSortingStrategy}
                     >
-                        {filteredFolders.map(({ folder, depth }) => (
-                            <div key={folder.id} style={{ paddingInlineStart: Math.min(depth, 6) * 12 }}>
+                        {filteredFolders.map(({ folder, branches }) => (
+                            <div key={folder.id} className="relative" style={{ paddingInlineStart: settings.sidebarCollapsed ? 0 : branches.length * FOLDER_INDENT }}>
+                            {!settings.sidebarCollapsed && branches.length > 0 && (
+                                <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+                                    {branches.map((lastSibling, index) => (!lastSibling || index === branches.length - 1) && (
+                                        <span
+                                            key={index}
+                                            className="absolute border-s border-app-border-strong"
+                                            style={{
+                                                insetInlineStart: FOLDER_GUIDE_START + index * FOLDER_INDENT,
+                                                top: -1,
+                                                bottom: lastSibling ? undefined : -1,
+                                                height: lastSibling ? 'calc(50% + 1px)' : undefined,
+                                            }}
+                                        />
+                                    ))}
+                                    <span className="absolute top-1/2 w-2.5 border-t border-app-border-strong" style={{ insetInlineStart: FOLDER_GUIDE_START + (branches.length - 1) * FOLDER_INDENT }} />
+                                </span>
+                            )}
                             <SidebarItem
                                 key={folder.id}
                                 icon={Folder}

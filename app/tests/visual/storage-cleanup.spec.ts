@@ -16,7 +16,7 @@ async function mount(page: Page, mode: 'storage' | 'cleanup') {
             requestedAt: 1_783_632_600_000, deleteAfter: 1_786_224_600_000,
         });
         const fixture = {
-            files, calls: [] as { command: string; args: any }[], nextClearError: '', nextRestoreError: '', nextScheduleError: '',
+            files, calls: [] as { command: string; args: any }[], nextClearError: '', nextRestoreError: '',
             snapshot: { ownerId: '11', freeBytes: 8192 * MIB as number | null, limits: { previews: 1024 * MIB, thumbnails: 128 * MIB, converted: 2048 * MIB },
                 categories: [
                     { id: 'kept', bytes: 2048 * MIB, reclaimableBytes: 0, fileCount: 12 },
@@ -47,14 +47,6 @@ async function mount(page: Page, mode: 'storage' | 'cleanup') {
                         return;
                     }
                     if (command === 'cmd_cleanup_list') return structuredClone(fixture.removals);
-                    if (command === 'cmd_cleanup_schedule') {
-                        if (fixture.nextScheduleError) { const error = fixture.nextScheduleError; fixture.nextScheduleError = ''; throw new Error(error); }
-                        return args.keys.map((key: string) => {
-                            const scheduled = key === 'saved:42';
-                            if (scheduled) fixture.removals.unshift({ ...removal('new', '', 'pending'), key, file: files.find(item => item.key === key)! });
-                            return { key, scheduled, error: scheduled ? null : 'FILE_CHANGED' };
-                        });
-                    }
                     if (command === 'cmd_cleanup_restore') {
                         if (fixture.nextRestoreError) { const error = fixture.nextRestoreError; fixture.nextRestoreError = ''; throw new Error(error); }
                         const item = fixture.removals.find(value => value.key === args.key)!;
@@ -129,50 +121,17 @@ for (const width of [390, 1280]) {
         await expect(category('Downloaded files')).toContainText('Not measured on this device');
     });
 
-    test(`Cleanup ${width}px reviews duplicate sources, reports mixed outcomes and restores exact originals`, async ({ page }, testInfo) => {
+    test(`Cleanup ${width}px removes file analysis views but preserves exact-original recovery`, async ({ page }, testInfo) => {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
         await mount(page, 'cleanup');
-        await expect(page.getByRole('heading', { name: 'Review and clean up', exact: true })).toBeVisible();
-        await expect(page.getByText('Their contents have not been verified as identical.', { exact: false })).toBeVisible();
-        const choices = page.getByRole('checkbox', { name: 'Select for removal', exact: true });
-        await expect(choices).toHaveCount(2); await expect(choices.nth(0)).not.toBeChecked(); await expect(choices.nth(1)).not.toBeChecked();
-        await noHorizontalOverflow(page, width);
-        await page.screenshot({ path: testInfo.outputPath(`cleanup-initial-${width}.png`) });
-        const second = page.locator('article').filter({ has: page.getByRole('button', { name: 'Travel and field research', exact: true }) });
-        await second.getByRole('button', { name: duplicateName, exact: true }).click();
-        await second.getByRole('button', { name: 'Travel and field research', exact: true }).click();
-        expect(await calls(page, 'open-file')).toEqual([{ command: 'open-file', args: { key: '9:42' } }]);
-        expect(await calls(page, 'open-folder')).toEqual([{ command: 'open-folder', args: { folder: 9 } }]);
-        await choices.nth(0).check(); await choices.nth(1).check();
-        await page.getByRole('button', { name: 'Review removal', exact: true }).click();
-        const review = page.getByRole('region', { name: 'Review removal', exact: true });
-        await expect(review).toContainText(`Saved Messages / ${duplicateName}`);
-        await expect(review).toContainText(`Travel and field research / ${duplicateName}`);
-        await expect(review).toBeFocused();
-        for (const folder of ['Saved Messages', 'Travel and field research']) {
-            const fullyVisible = await review.getByText(`${folder} / ${duplicateName}`, { exact: true }).evaluate(element => element.scrollWidth <= element.clientWidth && getComputedStyle(element).textOverflow !== 'ellipsis');
-            expect(fullyVisible, 'The entire reviewed source name must be readable on a touch screen').toBe(true);
+        await expect(page.getByRole('heading', { name: 'Recently removed', exact: true })).toBeVisible();
+        for (const name of ['Possible duplicates', 'Large files', 'Older than a year', 'Review removal', 'Schedule removal']) {
+            await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
         }
-        await expect(review.getByRole('button', { name: 'Schedule removal' })).toBeDisabled();
-        expect(await calls(page, 'cmd_cleanup_schedule')).toHaveLength(0);
-        await review.getByRole('combobox', { name: 'Recovery period' }).selectOption('30');
-        await review.getByRole('checkbox').check();
-        await review.scrollIntoViewIfNeeded();
-        await page.screenshot({ path: testInfo.outputPath(`cleanup-review-${width}.png`) });
-        await review.getByRole('button', { name: 'Schedule removal' }).click();
-        const outcomes = page.getByRole('list', { name: 'Per-file results' });
-        await expect(outcomes).toBeVisible();
-        await expect(outcomes.getByText('Scheduled', { exact: true })).toBeVisible();
-        await expect(outcomes.getByText('Not scheduled; original preserved', { exact: true })).toBeVisible();
-        expect(await calls(page, 'cmd_cleanup_schedule')).toEqual([{ command: 'cmd_cleanup_schedule', args: { ownerId: '11', keys: ['saved:42', '9:42'], retentionDays: 30 } }]);
-        await expect(outcomes, 'Identical names need their source folders in the per-file outcome').toContainText('Saved Messages');
-        await expect(outcomes, 'The failed original must be distinguishable from the scheduled duplicate').toContainText('Travel and field research');
-        await expect(outcomes).toBeFocused();
-        await expect(page.getByRole('checkbox', { name: 'Removal scheduled', exact: true })).toBeDisabled();
-        await expect(page.getByRole('checkbox', { name: 'Select for removal', exact: true })).toBeChecked();
+        await expect(page.getByRole('checkbox')).toHaveCount(0);
+        await expect(page.getByText(duplicateName, { exact: true })).toHaveCount(0);
         await noHorizontalOverflow(page, width);
-        await outcomes.scrollIntoViewIfNeeded();
-        await page.screenshot({ path: testInfo.outputPath(`cleanup-outcomes-${width}.png`) });
+        await page.screenshot({ path: testInfo.outputPath(`cleanup-recovery-${width}.png`) });
         const recovery = (name: string) => page.locator('article').filter({ has: page.getByText(name, { exact: true }) });
         await expect(recovery('Old video.mp4').getByRole('button', { name: 'Restore to workspace' })).toHaveCount(0);
         await expect(recovery('Old archive.zip').getByRole('button', { name: 'Restore to workspace' })).toHaveCount(0);
@@ -187,6 +146,7 @@ for (const width of [390, 1280]) {
         await expect(page.getByRole('alert'), 'Restore failure must be visible from the recovery action').toBeInViewport();
         await expect(page.getByRole('alert')).toBeFocused();
         expect(await calls(page, 'cmd_cleanup_process')).toHaveLength(0);
+        expect(await calls(page, 'cmd_cleanup_schedule')).toHaveLength(0);
         await noHorizontalOverflow(page, width);
     });
 }

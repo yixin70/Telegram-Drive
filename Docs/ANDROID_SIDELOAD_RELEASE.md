@@ -1,6 +1,6 @@
-# Android and Google TV sideload release runbook
+# Retired Android sideload release runbook
 
-Telegram Drive is distributed as a signed sideloaded Android application, not through Google Play. The same universal APK supports Android phones, tablets, Android TV, and Google TV.
+Android support is retired in its entirety. This runbook is historical, not an instruction to build or publish another APK. Only Windows is supported. Existing APKs and private signing keys are not changed or revoked. Android-source publication restrictions still apply to repository history and retained artifacts. The private native project is not required to retire Android builds in this checkout.
 
 ## Fixed application identity
 
@@ -41,20 +41,19 @@ Status: all Android builds, artifact verification and installed-device acceptanc
 1. On the maintainer's private machine, use the reviewed release commit, Node 22, Rust 1.92, Java/Android SDK/NDK required by the local project, and the existing signing identity. Keep the generated Android project and all credentials outside outgoing Git commits. Choose the Android release version/code only after the owner decides the version line; verify the relevant inputs with `npm run android:version:check -- --tag vX.Y.Z` from `app/`.
 2. Run the host gates in `TESTING.md`. In `app/`, run `npm ci`, `npm run build:verify`, then the established local Android generation/build command `npm run tauri -- android build`. Preserve the locally maintained Android configuration; no Android project is created in GitHub. Confirm universal APK/AAB and the four ABI-specific signed APK outputs exist before packaging.
 3. From `app/`, run `bash scripts/verify-android-artifacts.sh src-tauri/gen/android/app/build/outputs`. This checks Baseline Profile presence, all four ABIs and 16 KiB ELF/ZIP alignment. Run `bash scripts/package-android-release.sh` with the existing private signing environment and pinned `ANDROID_SIGNING_CERT_SHA256`. It verifies certificates and AAB signing, packages binaries, creates `SHA256SUMS`, and creates/signs `android-update.json`. Preserve the APK hash, versionCode, package name, update-manifest URL and source revision in the private acceptance log. Do not publish signing keys.
-4. On a dedicated device with the previous signed APK installed, sign in, create a test folder and transfer queue, and record visible data before upgrade. Run `bash scripts/verify-android-upgrade.sh /private/path/previous.apk /private/path/current.apk` from `app/`. It checks matching certificates, increasing versionCode, in-place install and launch. It does **not** itself inspect application data. After it finishes, check that the Telegram session, folder/queue and settings survived. Repeat on phone and TV. Any data loss blocks publication.
+4. On dedicated phones/tablets with the previous signed APK installed, sign in, create a test folder and transfer queue, and record visible data before upgrade. Run `bash scripts/verify-android-upgrade.sh /private/path/previous.apk /private/path/current.apk` from `app/`. It checks matching certificates, increasing versionCode, in-place install and launch. It does **not** itself inspect application data. After it finishes, check that the Telegram session, folder/queue and settings survived. Any data loss blocks publication.
 5. Complete the device matrix below and [release acceptance](RELEASE_ACCEPTANCE.md). Verify `android-update.json` identifies the exact package, monotonically newer code, APK filename, SHA-256 and separate Android release URL; verify its Minisign signature with the existing embedded public key. Compare `SHA256SUMS` against the final APK bytes, not an earlier build.
 6. Before any GitHub push, run `node scripts/check-android-publication.cjs --range BASE..HEAD` at the repository root, replacing BASE with the remote published revision, and manually inspect `git diff --name-status BASE..HEAD` and every outgoing commit. The guard's pending owner-review list is not permission to publish those paths. Android project/configuration/generated/test sources and signing files must never be pushed, even if a later outgoing commit removes them.
 7. Only after owner authorization and every local gate passes, create/use the separate Android release and upload the compiled signed APKs and their checksums/update manifest/signature. Keep the AAB as a private archive unless separately authorized as a compiled release asset. Never upload source folders, Gradle reports containing private paths, projects, credentials or signing backups. Do not push a desktop version tag as part of Android publication.
 
 The updater metadata is derived from the exact universal APK, using `scripts/create-android-release-manifest.cjs` (arguments `--apk`, `--version`, `--version-code`, `--repository`, `--tag`, `--output`) and the existing updater signing key. Use the real separate Android tag in the final manifest. Local packaging/version verification may use the plain semantic tag required by its checker; inspect the final download URL before signing rather than assuming it is correct for an `Androidv...` tag. Publication and key changes are owner actions, not performed by this pass.
 
-## Phone, tablet, and television acceptance
+## Phone and tablet acceptance
 
-Use at least one API 24–28 phone-class device, one API 35 phone/tablet, and one API 35 Android TV or Google TV device/emulator. Verify:
+Use at least one API 24–28 phone-class device and one API 35 phone/tablet. Verify:
 
 - cold sign-in and session restoration;
-- D-pad focus, Select/Enter activation, Back navigation, Leanback launcher banner, and landscape layout on TV;
-- remote-friendly file browsing, settings, transfer controls, and in-app media playback;
+- touch/keyboard file browsing, settings, transfer controls, landscape layout and in-app media playback;
 - audio/video streaming without leaving Telegram Drive, system MediaSession controls, seek/resume, playback speed, subtitle/audio track selection, and Picture-in-Picture where supported;
 - Wi-Fi/metered/roaming, low-battery, charging, Doze, process-death, reboot, and low-storage transfer behavior;
 - notification denial and recovery, app lock, screenshot/Recents protection, and private lock-screen media metadata;
@@ -64,20 +63,19 @@ Useful test commands:
 
 ```bash
 bash scripts/run-android-emulator-tests.sh phone
-bash scripts/run-android-emulator-tests.sh google-tv
 bash scripts/test-android-resilience.sh com.cameronamer.telegramdrive process-death
 bash scripts/test-android-resilience.sh com.cameronamer.telegramdrive low-battery
 bash scripts/test-android-resilience.sh com.cameronamer.telegramdrive doze
 bash scripts/verify-android-upgrade.sh previous.apk current.apk
 ```
 
-The emulator runner creates an isolated AVD and requires the matching API 36 system image. Run it for both the phone and Google TV images. The resilience script changes emulator/device power state and resets it on exit. Use `reboot-recovery` only on a dedicated test device.
+The emulator runner creates an isolated phone AVD and requires the matching API 36 system image. TV profiles are rejected. The resilience script changes emulator/device power state and resets it on exit. Use `reboot-recovery` only on a dedicated test device.
 
 ## Sideloading
 
 On Android phones/tablets, download the signed universal APK from the matching GitHub release, compare it with `SHA256SUMS`, allow the browser/file manager to install unknown apps, and open the APK.
 
-On Android TV or Google TV, either transfer the APK with a trusted local file-transfer tool or install it through ADB:
+On a dedicated Android phone/tablet, ADB installation is also available:
 
 ```bash
 adb install Telegram-Drive-vX.Y.Z-android-universal.apk

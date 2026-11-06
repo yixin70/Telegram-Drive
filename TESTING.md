@@ -1,11 +1,12 @@
 # End-to-end testing
 
+Current application target: **Windows only**. Android builds, mobile UI and mobile-only journeys are retired. Android publication checks remain as repository-history protections, not Android support. Historical device/platform observations below are not current support promises.
+
 ## Nested folders
 
 From `app/`, `npx playwright test tests/e2e/folder-hierarchy.spec.ts --workers=1`
 exercises contextual creation, breadcrumbs, safe folder moves, sync failure/retry,
-stale-response rejection and duplicate-create prevention. The touch journey mounts
-the real mobile component through a development-only route, not a native WebView.
+stale-response rejection and duplicate-create prevention through the Windows desktop shell.
 
 From the repository root,
 `cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e hierarchy_ -- --test-threads=1`
@@ -54,7 +55,9 @@ Behavioral regression testing uses E2E suites. New tests must exercise an applic
 
 ## Host verification
 
-Install JavaScript dependencies in `app/`, the normal native build prerequisites, FFmpeg on macOS/Linux for video upload journeys, and Playwright Chromium:
+The current application target is Windows only. Android, macOS, Linux and TV-specific observations below are historical only. Linux-hosted browser/tool checks do not imply Linux application support. No replacement Android APK or private native project is required to retire Android support.
+
+Install JavaScript dependencies in `app/`, Windows native build prerequisites, and Playwright Chromium:
 
 ```sh
 npm ci --prefix app
@@ -92,7 +95,7 @@ cargo fmt --manifest-path app/src-tauri/Cargo.toml --all -- --check
 cargo clippy --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --lib --all-targets -- -D warnings
 ```
 
-The dependency-assurance workflow remains mandatory for desktop publication. Release verification requires browser and native E2E suites before creating a release. CI also builds the normal application on Windows, Linux, and macOS. Unit-test line-coverage floors have been retired; a green E2E run must not be presented as 100% code or feature coverage.
+The dependency-assurance workflow remains mandatory for desktop publication. Release verification requires browser and native E2E suites before creating a release. Native application CI builds Windows only. Unit-test line-coverage floors have been retired; a green E2E run must not be presented as 100% code or feature coverage.
 
 ## Device and external-service acceptance
 
@@ -139,22 +142,15 @@ Include these in installed-app acceptance and report them as unrun when they wer
 
 Browser fixtures do not prove the Tauri IPC bridge, OS credential stores, native codecs, real Telegram network behavior, or installed-app updates. Native loopback/process tests do not replace GUI or OS integration checks. Their encrypted-file fixtures verify vault/envelope persistence and recovery; they do not verify Telegram encrypted-download staging or publication.
 
-Before a supported release, perform the relevant installed-app and device acceptance: sign in/out, switch accounts, upload/download/stream, restart/update without losing settings, verify encrypted-file recovery, and exercise Android device flows. Never use personal sessions or real keychain entries as automated test fixtures.
+Before a supported release, perform Windows installed-app acceptance: sign in/out, switch accounts, upload/download/stream, restart/update without losing settings, and verify encrypted-file recovery. Never use personal sessions or real keychain entries as automated test fixtures.
 
-Android device/emulator verification stays local; Android source and test projects must not be published to GitHub. With the SDK/NDK configured and the required system images installed, create the universal debug JNI inputs and run a private emulator from `app/`:
-
-```sh
-npm run tauri -- android build --debug --target aarch64 armv7 i686 x86_64 --apk true --ci
-bash scripts/run-android-emulator-tests.sh phone
-```
-
-The runner uses 4096 MB of emulator RAM by default (`ANDROID_EMULATOR_RAM_MB` overrides it). This is a verified test-environment setting, not an application memory requirement. API 35+ phone runs include real PIN cancellation/reopen, camera-journal process restart, and session-recovery journeys after device instrumentation. The runner reinstalls the instrumentation APK for the separate ADB-driven journeys because Gradle removes it after its own tests. Each journey restores its synthetic state; the emulator is shut down on exit. Report device or platform checks that were unavailable as unrun, never as passing.
+Android build and emulator entrypoints are retired. Historical Android source and test projects must still not be published to GitHub; the publication guard remains mandatory. Old APKs are not modified or revoked by this source change.
 
 When fixing a regression, add a failing journey at the affected application boundary, make the smallest implementation change, and run that suite plus relevant static/build checks. Use explicit readiness and observable state changes rather than sleeps that assume a busy runner's scheduling speed.
 
 ## Desktop package contents
 
-After the frontend build and native E2E build, run `node scripts/e2e/desktop-package.e2e.cjs` on macOS or Linux. This invokes the real Tauri bundler against the compiled debug application and checks the app/Debian package contents for accidental E2E executables. It does not sign or publish artifacts, launch the GUI, or replace Windows installer verification. The release workflow runs this journey on Linux before creating the draft release.
+The historical macOS/Linux `desktop-package.e2e.cjs` bundler journey is retired from current release verification. Windows NSIS package checks and packaged startup checks remain required; no macOS/Linux application is built or published.
 
 ## Local full-text search
 
@@ -185,11 +181,11 @@ The application browser suite audits all twelve Settings tabs, a populated Trans
 
 Two transfer cleanup journeys cancel an upload or download through its visible button, then use Clear finished to remove completed, failed and cancelled rows. They retain pending, active, paused, network-waiting, unlock-waiting and cooldown work, other-direction rows, foreign-account records and terminal records whose persistence is still pending. Repeated clearing preserves those records. The journeys run the real application with the controlled native IPC/event fixture; they verify the cleanup command's account, direction and failure/cancellation flag, not native SQLite persistence or real Telegram cancellation.
 
-A development-only TV fixture uses the production spatial-navigation hook with real DOM inputs, a native select, a scroll region and Settings. Keyboard journeys check below-fold focus/scrolling, dialog containment/restoration and native caret, number and selection behavior against an identical control with the hook disabled. Physical Google TV remotes and Android devices remain unrun.
+TV spatial navigation, mobile development fixtures and their platform-exclusive journeys have been removed. Ordinary desktop keyboard and modal focus/restoration journeys remain. The local-permission dialog uses a generic Settings control fixture rather than a TV shell.
 
 The Arabic main dashboard has a new, inspected RTL snapshot, overflow checks, a full-document axe audit and keyboard focus coverage. Existing visual snapshots were not regenerated. The two new catalog keys `settings.show_passphrase` and `settings.hide_passphrase` were translated in all 24 locales; each needs owner-arranged native-language review. This accessibility work does not complete the broader localization debt.
 
-The TV native-field exit journey enters controls using arrows, edits text/number/select values, uses Escape to leave editing, then navigates to another control without Tab. Enter resumes editing; the first Escape inside an editing field keeps Settings open, held-key repeats do not close it, and a new Escape after leaving the field closes it. Blur resets the field mode and Enter resumes editing without submitting a surrounding form. This is browser keyboard evidence; actual remote Back event delivery remains part of the unrun device acceptance.
+TV remote/native-field exit acceptance is no longer part of the supported platform matrix.
 
 ## Built language resources
 
@@ -197,7 +193,7 @@ The production-catalog browser journey builds real Vite assets and serves them o
 
 The release-tool suite also runs the locale-validation CLI against temporary catalogs, proving missing required plurals, changed extra-form interpolation and copied-English extra forms are rejected. The bundle CLI counts the shared dictionary, rejects unpacked production resources, missing tables and changed packed values, and retains all route/chunk/locale ceilings. Source catalogs remain ordinary JSON; the distributed arrays are a lossless representation. Every added translation/plural range requiring native review is listed in `Docs/LOCALIZATION_REVIEW.md`.
 
-Mobile localization browser journeys in Spanish cover translated promise and privacy copy, narrow layout, and the localized toast for restored settings. The boundary uses controlled native responses; real Android Keystore and devices remain unrun.
+Desktop localization browser journeys retain Spanish privacy, settings and focus coverage through controlled native responses. Mobile-only localization fixtures and journeys are retired; historical Android observations are not current release acceptance.
 
 All 24 catalogs, including English, are now local data assets. The bootstrap awaits complete resources before React mounts, using a small canonical-derived set of translated loading/error/retry labels if resources fail. The attempt has an eight-second deadline; timed-out responses cannot mount the application later. Reload clears dictionary/catalog requests. Saved-language lookup waits at most 700 ms before using the system language; normal Settings loading can apply the persisted preference later. This lookup does not write preferences or credentials.
 
@@ -230,9 +226,9 @@ TDENC2 known-answer native journeys use immutable public vectors from the v3.9.8
 
 Release input preflight: `node scripts/release-preflight.cjs --allow-unreleased`. Release readiness uses the strict default without `--allow-unreleased`, which requires a finalized version heading in `CHANGELOG.md`. The preflight runs only local checks (version agreement, required build inputs, baseline expiry, test policy, application security, and the Android publication guard) and makes no network request. Artifact provenance can be checked with `--verify-attestation FILE --attestation-repo OWNER/REPO`; published artifact attestation remains unrun until artifacts exist.
 
-Storage insights reuse the generation-backed search inventory and report `complete: false` for bounded/offline inventory. The native journey scans 1,200 files across two fixture folders, retains the 1,000-result display limit, and proves subsequent views need no additional source requests. Insights now exclude locally hidden files consistently with workspace search. Proxy transport journeys accept a valid RPC rejection but refuse malformed/disconnected controlled HTTP; the real MTProto/proxy handshake remains UNRUN. Desktop external-file journeys register published downloads, restart, and refuse arbitrary/modified/symlink-substituted paths using an opening sink; installed OS external opening remains UNRUN. Six new hook IDs use UUIDs; persisted legacy transfer IDs remain opaque strings in the durable engine.
+Storage insight views and their dedicated native command have been removed. Browser journeys cover their absence in expanded/collapsed sidebars and Cleanup, while retaining restoration of previously scheduled removals. The native search journey scans 1,200 files across two fixture folders and verifies subsequent searches reuse the same generation without additional source requests. Proxy transport journeys accept a valid RPC rejection but refuse malformed/disconnected controlled HTTP; the real MTProto/proxy handshake remains UNRUN. Desktop external-file journeys register published downloads, restart, and refuse arbitrary/modified/symlink-substituted paths using an opening sink; installed OS external opening remains UNRUN. Six new hook IDs use UUIDs; persisted legacy transfer IDs remain opaque strings in the durable engine.
 
-File-capability review added a same-size modified-cache journey and a held 32 MiB file-worker journey. Modified registered cache reuse is rejected without deleting bytes. Legacy kept caches remain internally available offline or above the disposable cap, without gaining external-opening permission. Two hashing jobs hold their blocking permits while the native runtime remains responsive; 32 MiB registration plus two validations are expected to read 96 MiB total in 64 KiB buffers. This is controlled scheduling evidence, not a real multi-GB OS launch benchmark. Storage insight aggregation temporarily clones bounded FileMetadata values from the retained index (up to its 100,000-row/32 MiB serialized-text limits), in addition to the already retained index; it does not clone all raw Telegram messages or rebuild the index per view.
+File-capability review added a same-size modified-cache journey and a held 32 MiB file-worker journey. Modified registered cache reuse is rejected without deleting bytes. Legacy kept caches remain internally available offline or above the disposable cap, without gaining external-opening permission. Two hashing jobs hold their blocking permits while the native runtime remains responsive; 32 MiB registration plus two validations are expected to read 96 MiB total in 64 KiB buffers. This is controlled scheduling evidence, not a real multi-GB OS launch benchmark.
 
 Release pipeline process journeys cover plain/RC/malformed tags, first-block changelog extraction, base-version agreement, paginated draft reuse, awaited publication with prerelease/latest policy, refusal to redraft published tags, isolated readiness/early-exit/deadline handling, and RC-to-plain Debian/Arch recipe mapping. These use local API/application fixtures; every GitHub workflow and actual packaged OS startup remains UNRUN. `scripts/check-workflow-pins.cjs` preserves full commit pins, scheduled baseline expiry and conditional signing. YAML was parsed locally; that does not validate GitHub runtime behavior.
 
@@ -318,7 +314,7 @@ Paced native multipart journeys require live upload rates before completion and 
 
 `node scripts/e2e/packaged-startup.e2e.cjs` drives the smoke CLI as a child process with a controlled application fixture. It covers numeric-leading authenticated nonces, runtime package-kind rejection, readiness deadlines, and parent exit with surviving descendants. Windows additionally verifies the real OS profile variables remain intact and rejects a readiness marker followed by natural application exit while descendants are reaped. Two further Windows journeys use a test-owned sibling process with a real delete-denying FileStream handle: a transient profile-database lock survives Job reaping, then releases while bounded cleanup retries; a persistent lock must still fail without printing startup success. Every Windows-only journey is skipped on other hosts, never counted as passed. The job contains children before execution. These fixtures do not prove Tauri or WebView startup.
 
-Desktop CI builds actual NSIS, AppImage, Debian, RPM, macOS DMG and updater application archives, then runs the same packaged smoke scripts as release CI in disposable runner accounts. Each checks actual startup readiness and Tauri's runtime bundle type with a fresh numeric-leading nonce. The Windows launcher assigns a suspended application to a kill-on-close job and confirms the job is empty before cleanup; failure diagnostics retain the original startup error. Cleanup retries only the existing exact isolated profile/root removals (10 retries with 100 ms linear backoff); persistent filesystem errors remain failures. PR packages skip signing and publication; the release workflow retains its existing signing gates and keys. The Arch release smoke expects Debian runtime type because it repackages that exact upstream executable. No local GUI or manual platform acceptance is part of this check.
+Desktop CI builds Windows NSIS packages and runs the packaged smoke scripts in disposable runner accounts. These check actual startup readiness and Tauri's runtime bundle type with a fresh numeric-leading nonce. The Windows launcher assigns a suspended application to a kill-on-close job and confirms the job is empty before cleanup; failure diagnostics retain the original startup error. Cleanup retries only the existing exact isolated profile/root removals (10 retries with 100 ms linear backoff); persistent filesystem errors remain failures. PR packages skip signing and publication; the release workflow retains its Windows signing gates and updater keys. No local GUI or manual platform acceptance is part of this check.
 
 ### Legacy REST absence acceptance (opt-in two-pass)
 

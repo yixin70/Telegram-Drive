@@ -100,7 +100,7 @@ export function WorkspaceHub({ folders, initialKeys = [], onClose, onOpen, onFol
             {workspace.indexing && <p role="status" className="text-sm text-telegram-subtext">{t('workspace.scan_progress', { count: data?.files.length || 0 })}</p>}
             {owner && tab === 'watch' && <Suspense fallback={<p>{t('common.loading')}</p>}><ContinueWatchingShelf ownerId={owner} onPlay={file => onOpen(file)} /></Suspense>}
             {owner && tab === 'offline' && <Suspense fallback={<p>{t('common.loading')}</p>}><OfflinePacksPanel ownerId={owner} selectedFiles={selectedFiles} collectionName={data?.collections.find(item => item.id === collection)?.name} onOpen={(file,path,isCurrent) => { if (!isCurrent || isCurrent()) onOpen(file,undefined,path); }} /></Suspense>}
-            {owner && data && tab === 'cleanup' && <Suspense fallback={<p>{t('common.loading')}</p>}><CleanupPanel ownerId={owner} files={data.files} onOpen={file => open(file)} onFolder={onFolder} /></Suspense>}
+            {owner && tab === 'cleanup' && <Suspense fallback={<p>{t('common.loading')}</p>}><CleanupPanel ownerId={owner} /></Suspense>}
             {owner && tab === 'storage' && <Suspense fallback={<p>{t('common.loading')}</p>}><StoragePanel ownerId={owner}/></Suspense>}
             {owner && tab === 'activity' && <Suspense fallback={<p>{t('common.loading')}</p>}><ActivityPanel ownerId={owner}/></Suspense>}
             {owner && data && (tab === 'library' || tab === 'timeline') && <div className="grid min-w-0 gap-5 lg:grid-cols-[250px_minmax(0,1fr)]">

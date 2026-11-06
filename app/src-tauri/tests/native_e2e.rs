@@ -9233,22 +9233,25 @@ fn tdenc2_golden_corruption_never_publishes_plaintext() {
 }
 
 #[test]
-fn release_small_storage_insights_include_older_inventory_and_reuse_generations() {
+fn release_search_includes_older_inventory_and_reuses_generations() {
     let fixture = Fixture::new();
     fixture.write("inventory.json", serde_json::to_vec(&json!({"rows":(1..=600).map(|id| json!({"id":id,"name":format!("older-file-{id}.pdf"),"text":"","raw":0})).collect::<Vec<_>>() })).unwrap());
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
-    for view in ["large", "duplicates", "old"] {
-        let reply = app.ok(json!({"command":"storage_insight_inventory","owner":"101","folders":[1,2],"source":"inventory.json","view":view}));
-        assert_eq!(reply["scanned_count"], 1200);
+    let mut index_id = None;
+    for query in ["older-file", "older-file-600", "older-file-1"] {
+        let reply = app.ok(json!({"command":"search_inventory","owner":"101","folders":[1,2],"source":"inventory.json","query":{"query":query,"limit":10}}));
+        assert!(reply["total"].as_u64().unwrap() > 0);
         assert_eq!(reply["complete"], true);
         assert_eq!(reply["historyCalls"], 2);
         assert_eq!(reply["lookupBatches"], 0);
-        if view == "large" {
-            assert_eq!(reply["files"].as_array().unwrap().len(), 1000);
+        if query == "older-file" {
+            assert_eq!(reply["total"], 1200);
         }
-        if view == "duplicates" {
-            assert_eq!(reply["duplicate_groups"], 600);
+        if let Some(ref expected) = index_id {
+            assert_eq!(&reply["indexId"], expected);
+        } else {
+            index_id = Some(reply["indexId"].clone());
         }
     }
 }

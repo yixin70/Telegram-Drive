@@ -99,7 +99,20 @@ export function SidebarItem({
                     : 'text-app-text-secondary hover:text-app-text'
                 }`}
         >
-            {!collapsed && onToggleExpanded && <button type="button" aria-expanded={expanded} aria-label={t(expanded ? 'hierarchy.collapse' : 'hierarchy.expand', { name: label })} className="quiet-control flex h-7 w-5 shrink-0 items-center justify-center" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleExpanded(); }}><ChevronRight className={`h-3 w-3 ${expanded ? 'rotate-90' : ''}`} /></button>}
+            {!collapsed && folderId !== null && (
+                onToggleExpanded ? (
+                    <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={t(expanded ? 'hierarchy.collapse' : 'hierarchy.expand', { name: label })}
+                        className="quiet-control flex h-7 w-4 shrink-0 items-center justify-center"
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={e => { e.stopPropagation(); onToggleExpanded(); }}
+                    >
+                        <ChevronRight className={`h-3 w-3 ${expanded ? 'rotate-90' : 'rtl:rotate-180'}`} />
+                    </button>
+                ) : <span aria-hidden="true" className="w-4 shrink-0" />
+            )}
             <Icon className={`h-4 w-4 flex-shrink-0 ${active || isFileDragOver ? 'text-app-accent' : ''}`} />
             {!collapsed && <span className="flex-1 truncate text-start">{label}</span>}
             {isFileDragOver && dragCount > 1 && (

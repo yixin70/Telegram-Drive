@@ -1,5 +1,7 @@
 # Linux packaging and rendering compatibility
 
+> **Retired platform — historical reference only.** This checkout supports Windows and Android phones/tablets. Linux packages, release jobs and support have been retired; the instructions below describe older releases, not current supported builds. Existing user data is not deleted.
+
 Telegram Drive ships Linux release artifacts for different installation models. All of them use the same application identifier and data locations, and none of the packages should remove user configuration, cached metadata, or Telegram sessions during an install or upgrade.
 
 ## Choose a package

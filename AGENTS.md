@@ -23,3 +23,13 @@ This checkout is a personal-use, all-free build. The optional $5 lifetime ad-fre
 Preserve account isolation, encrypted-data integrity and recovery, transfer behavior, secure credential storage, and release protections. The application credential service name and account identifiers for Telegram credentials are stable and must not be rotated as an incidental refactor.
 
 Any change that would reintroduce payment, entitlement, advertising, or a licensing server requires the repository owner's explicit approval and a reviewed plan.
+
+## Efficient searching and reading
+
+- Search before reading; start with likely paths and specific symbols.
+- Expand searches only when narrower searches are insufficient.
+- Read coherent sections with enough surrounding context for correctness.
+- Avoid redundant reads and irrelevant generated or dependency files.
+- After edits, prefer targeted diffs and tests over rereading entire files.
+- Give subagents relevant paths and findings to reduce duplicate exploration.
+- Prioritize correctness over minimizing tool calls or tokens.

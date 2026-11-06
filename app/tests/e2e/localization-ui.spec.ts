@@ -135,7 +135,7 @@ test('the encryption explanation localizes safety details and returns focus with
 
 test('WebDAV access explanation localizes credential and encryption boundaries without enabling a server',async({page})=>{
  const es=JSON.parse(await readFile(new URL('../../src/i18n/locales/es.json',import.meta.url),'utf8'));
- await desktopFixture(page,{settings:{language:'es'}});await page.goto('/?a11y-fixture=tv-control');const outside=page.getByRole('button',{name:'Open settings',exact:true});await outside.click();
+  await desktopFixture(page,{settings:{language:'es'}});await page.goto('/?a11y-fixture=settings-control');const outside=page.getByRole('button',{name:'Open settings',exact:true});await outside.click();
  const settings=page.getByRole('dialog');await settings.getByRole('button',{name:es.settings.tab_advanced,exact:true}).click();await settings.getByRole('button',{name:/^WebDAV/}).click();
  const opener=settings.getByRole('button',{name:es.access_copy.webdav_open,exact:true});await opener.click();
  const explanation=page.getByRole('dialog',{name:es.access_copy.webdav_title,exact:true});await expect(explanation).toBeVisible();

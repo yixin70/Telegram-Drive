@@ -271,7 +271,7 @@ The Google TV offer was the identified meaning regression. It now uses the new `
 
 `settings.current_vault_passphrase` has a proper current-vault-passphrase label in all 24 canonical locales. The packed dry-run adds 62 bytes to Bengali (124,881/125,000) and 1,016 bytes in total (1,734,675/1,800,000), with no ceiling increase. Native linguistic and device review remains **UNRUN** for every translation. The field is masked and uses the current-password autocomplete role; it is distinct from the replacement and confirmation fields.
 
-The storage-insight partial indicator reuses `workspace.search_partial`: its count is the retained generation-backed index count, so "indexed results · partial inventory" describes this source accurately. The existing key is present in all 24 catalogs; no new locale bytes were added for this indicator. Native-language review remains UNRUN.
+The storage-insight partial indicator and its unused labels have been removed with the large-file, old-file, and duplicate-file views. `workspace.search_partial` remains in use by search. Native-language review remains UNRUN.
 
 ## Part 4 follow-up — all native review UNRUN
 

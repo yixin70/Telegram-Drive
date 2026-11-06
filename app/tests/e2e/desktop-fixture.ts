@@ -39,7 +39,6 @@ export async function desktopFixture(page: Page, options: {
   persistTransfersAcrossReload?: boolean;
   networkEnabled?: boolean;
   platform?: 'windows' | 'android';
-  isTelevision?: boolean;
 } = {}) {
   await page.route(`http://localhost:${options.streamingPort ?? 14201}/**`, route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><p>Offline media fixture</p>' }));
   await page.addInitScript(options => {
@@ -150,7 +149,7 @@ export async function desktopFixture(page: Page, options: {
             if (args.password === 'incorrect-fixture-password') throw new Error('That two-step verification password is incorrect. Check it and try again.');
             return { success: true };
           }
-          if (command === 'cmd_get_android_transfer_environment') return {isTelevision: options.isTelevision ?? false, connected: true};
+          if (command === 'cmd_get_android_transfer_environment') return {connected: true};
           if (command === 'cmd_get_android_playback_history') return [];
           if (command === 'cmd_check_connection' || command === 'cmd_is_network_available' || command === 'cmd_get_android_network_status') return true;
           if (command === 'cmd_search_local') {
@@ -281,7 +280,6 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_preview' || command === 'cmd_get_display_preview' || command === 'cmd_workspace_asset') return image;
           if (command === 'cmd_get_bandwidth') return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' };
           if (command === 'cmd_set_weekly_quota') { if (state.quotaSaveFails) throw new Error('Storage unavailable'); state.weeklyQuota = args.limitBytes; localStorage.setItem('desktop-e2e-weekly-quota', String(args.limitBytes)); return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' }; }
-          if (command === 'cmd_get_storage_insight') return { files: [file(80, 1)], scanned_count: 1200, duplicate_groups: 0, complete: false };
           if (command === 'cmd_logout') {
             if (state.logoutFails) throw new Error('Private native diagnostic');
             return { signed_out: true, remote_session_revoked: !state.remoteSignOutUnconfirmed };

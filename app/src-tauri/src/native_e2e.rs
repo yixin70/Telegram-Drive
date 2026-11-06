@@ -1542,7 +1542,6 @@ impl Driver {
             | "publication_finish"
             | "listing_rename"
             | "inventory_upload_published"
-            | "storage_insight_inventory"
             | "external_file_start"
             | "external_file_forget"
             | "external_file_identity_mode"
@@ -2433,44 +2432,6 @@ impl Driver {
                 })
                 .await;
                 Ok(json!({"transportWorks":works}))
-            }
-            "storage_insight_inventory" => {
-                let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;
-                let folders: Vec<i64> =
-                    serde_json::from_value(request["folders"].clone()).map_err(error)?;
-                crate::commands::search::verified_folders(&account, &folders)?;
-                let source = InventorySearchSource {
-                    folders,
-                    cache: self.inventories.clone(),
-                    source: InventorySource {
-                        path: child(&self.root, text(&request, "source")?)?,
-                        history: self.inventory_history.clone(),
-                        calls: self.inventory_calls.clone(),
-                        lookups: self.inventory_lookups.clone(),
-                        lookup_times: self.inventory_lookup_times.clone(),
-                        cached: Arc::new(std::sync::Mutex::new(None)),
-                        started: Arc::new(tokio::sync::Notify::new()),
-                    },
-                };
-                let mut reply = serde_json::to_value(
-                    crate::commands::storage_insights::from_source(
-                        account,
-                        self.crypto.clone(),
-                        &source,
-                        text(&request, "view")?.into(),
-                        Some(1),
-                        Some(1),
-                    )
-                    .await?,
-                )
-                .map_err(error)?;
-                reply["historyCalls"] = json!(self
-                    .inventory_calls
-                    .load(std::sync::atomic::Ordering::SeqCst));
-                reply["lookupBatches"] = json!(self
-                    .inventory_lookups
-                    .load(std::sync::atomic::Ordering::SeqCst));
-                Ok(reply)
             }
             "inventory_refresh_overlap" => {
                 let account = AccountGuard::open(&self.root, Some(text(&request, "owner")?))?;

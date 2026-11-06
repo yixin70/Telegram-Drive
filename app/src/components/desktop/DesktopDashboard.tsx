@@ -23,7 +23,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
-import { TelegramFile, TelegramFolder, BandwidthStats, type SmartView, type StorageInsightResult } from '../../types';
+import { TelegramFile, TelegramFolder, BandwidthStats, type SmartView } from '../../types';
 import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, isTextFile, copyToClipboard } from '../../utils';
 
 // Components
@@ -142,7 +142,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         void setActiveFolderId(id);
     };
     useEffect(() => { setMovingFolder(null); setFolderOverview(false); }, [accountId]);
-    const [insightSummary, setInsightSummary] = useState<{ scope: string; count: number; complete: boolean } | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [searchFilters, setSearchFilters] = useState<FileSearchFilters>(DEFAULT_SEARCH_FILTERS);
     const { results: searchResults, isSearching, reply: searchReply, error: searchError } = useGlobalFileSearch(searchTerm, searchFilters, accountId);
@@ -288,16 +287,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 let localFiles: TelegramFile[];
                 if (activeSmartView === 'offline') {
                     localFiles = await invoke<TelegramFile[]>('cmd_get_offline_files', { ownerId: accountId, limit: 250 });
-                } else if (activeSmartView === 'large' || activeSmartView === 'old' || activeSmartView === 'duplicates') {
-                    const insight = await invoke<StorageInsightResult>('cmd_get_storage_insight', {
-                        view: activeSmartView,
-                        ownerId: accountId,
-                        largeThresholdBytes: 100 * 1024 * 1024,
-                        oldFileDays: 365,
-                    });
-                    check();
-                    setInsightSummary({ scope: fileLoadScope, count: insight.scanned_count, complete: insight.complete });
-                    localFiles = insight.files;
                 } else {
                     localFiles = await invoke<TelegramFile[]>('cmd_get_file_activity', { ownerId: accountId, view: activeSmartView, limit: 250 });
                 }
@@ -752,9 +741,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             favorites: t('common.favorites'),
             pinned: t('common.pinned'),
             offline: t('common.offline_files'),
-            large: t('common.large_files'),
-            old: t('common.old_files'),
-            duplicates: t('common.duplicates'),
         } as const)[activeSmartView]
         : currentFolderName;
 
@@ -961,7 +947,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         </h2>
                     </div>
                 )}
-                {insightSummary?.scope === fileLoadScope && !insightSummary.complete && <p role="status" className="px-3 text-xs text-app-text-secondary">{t('workspace.search_partial', { count: insightSummary.count })}</p>}
                 {searchError && <p role="alert" className="px-3 text-xs text-app-danger">{t('workspace.error_operation')}</p>}
                 {searchReply && <p role="status" className="px-3 text-xs text-app-text-secondary">{t(searchReply.complete ? 'workspace.search_complete' : 'workspace.search_partial', { count: searchReply.total })}{searchReply.offline ? ` · ${t('settings.offline')}` : ''}</p>}
                 {!folderOverview && <FileExplorer

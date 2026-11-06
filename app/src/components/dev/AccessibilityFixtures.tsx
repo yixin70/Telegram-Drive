@@ -1,13 +1,10 @@
 import { LocalizationArraysBrowserFixture } from './LocalizationArraysBrowserFixture';
 import {RuntimeCopyBrowserFixture} from './RuntimeCopyBrowserFixture';
 import { useEffect, useState } from 'react';
-import {useTvSpatialNavigation} from '../../hooks/useTvSpatialNavigation';
 import { AuthWizard } from '../shared/AuthWizard';
 import { FileExplorer } from '../desktop/dashboard/FileExplorer';
 import { SettingsModal } from '../desktop/dashboard/SettingsModal';
 import { ShareDialog } from '../desktop/dashboard/ShareDialog';
-import { BottomNavBar } from '../mobile/BottomNavBar';
-import MobileDashboard from '../mobile/MobileDashboard';
 import type { TelegramFile, TelegramFolder } from '../../types';
 
 const file: TelegramFile = {
@@ -31,10 +28,8 @@ const folder: TelegramFolder = {
 
 export default function AccessibilityFixtures() {
   const fixture = new URLSearchParams(window.location.search).get('a11y-fixture') || 'dashboard';
-  useTvSpatialNavigation(fixture === 'tv');
-  const [settingsOpen, setSettingsOpen] = useState(fixture !== 'tv' && fixture !== 'tv-control');
+  const [settingsOpen, setSettingsOpen] = useState(fixture !== 'settings-control');
   const [dialogOpen, setDialogOpen] = useState(true);
-  const [mobileTab, setMobileTab] = useState<'files' | 'downloads' | 'settings'>('files');
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -47,27 +42,11 @@ export default function AccessibilityFixtures() {
     };
   }, [fixture]);
 
-  if (fixture === 'tv' || fixture === 'tv-control') return (
-    <main className="h-screen overflow-hidden bg-app-canvas p-6 text-app-text">
-      <h1>TV navigation fixture</h1>
-      <input aria-label="Edge number" type="number" defaultValue={1} className="quiet-control absolute end-3 top-0 w-28 px-3 py-1" />
-      <input aria-label="Fixed edge number" type="number" defaultValue={1} className="quiet-control fixed end-36 top-0 w-28 px-3 py-1" />
-      <button type="button" onClick={()=>setSettingsOpen(true)} className="quiet-control my-3 px-3 py-2">Open settings</button>
-      <div className="mb-4 flex gap-4">
-        <label>Text input<input aria-label="Text input" defaultValue="abc" className="quiet-control block px-3 py-2" /></label>
-        <label>Number input<input aria-label="Number input" type="number" defaultValue={1} className="quiet-control block px-3 py-2" /></label>
-        <label>Native choice<select aria-label="Native choice" defaultValue="a" className="quiet-control block px-3 py-2"><option value="a">First choice</option><option value="b">Second choice</option></select></label>
-      </div>
-      <div data-testid="tv-scroll-region" className="h-48 w-72 overflow-y-auto border border-app-border p-3">
-        <button type="button" className="quiet-control block px-3 py-2">Top item</button>
-        <div className="h-[1100px]" aria-hidden="true" />
-        <button type="button" className="quiet-control block px-3 py-2">Below fold</button>
-      </div>
-      <SettingsModal ownerId="101" isOpen={settingsOpen} onClose={()=>setSettingsOpen(false)} />
-    </main>
-  );
+  if (fixture === 'settings-control') return <main className="h-screen bg-app-canvas text-app-text">
+    <button type="button" onClick={() => setSettingsOpen(true)}>Open settings</button>
+    <SettingsModal ownerId="101" isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+  </main>;
 
-  if (fixture === 'mobile-folders') return <MobileDashboard />;
   if (fixture === 'locale-arrays') return <LocalizationArraysBrowserFixture />;
 
   if (fixture === 'runtime-copy') return <RuntimeCopyBrowserFixture />;
@@ -97,15 +76,6 @@ export default function AccessibilityFixtures() {
       <main className="h-screen bg-app-canvas text-app-text">
         <h1 className="p-6 text-xl font-semibold">Sharing accessibility fixture</h1>
         {dialogOpen && <ShareDialog ownerId="fixture-owner" file={file} folders={[folder]} activeFolderId={folder.id} onClose={() => setDialogOpen(false)} />}
-      </main>
-    );
-  }
-
-  if (fixture === 'mobile') {
-    return (
-      <main className="min-h-screen bg-telegram-bg p-4 pb-32 text-telegram-text">
-        <h1 className="mb-4 text-lg font-semibold">Mobile settings</h1>
-        <BottomNavBar activeTab={mobileTab} setActiveTab={setMobileTab} isAndroid />
       </main>
     );
   }

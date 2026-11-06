@@ -44,31 +44,6 @@ test('automatic hierarchy sync reports errors without discarding cached folders 
   await expect(page.getByRole('status').filter({ hasText: 'Folder layout synced with Telegram' })).toBeVisible();
 });
 
-// The shipping entry point is the desktop shell even with Android OS flags.
-// Mount the real mobile dashboard and providers via the development route;
-// this exercises touch UI, not an Android WebView or native back-button lifecycle.
-test('mobile dashboard creates a child and returns through its ancestors', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await desktopFixture(page, { platform: 'android' });
-  await page.goto('/?a11y-fixture=mobile-folders');
-  const path = page.getByRole('navigation', { name: 'Folder path' });
-  await expect(path).toContainText('Photos');
-  await path.getByRole('button', { name: 'Create Folder', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByRole('textbox').fill('Touch child');
-  await dialog.getByRole('button', { name: 'Create private folder' }).click();
-  const children = page.getByRole('region', { name: 'Child folders' });
-  await children.getByRole('button', { name: 'Touch child', exact: true }).click();
-  await expect(path).toContainText('Touch child');
-  await path.getByRole('button', { name: 'Photos', exact: true }).click();
-  await children.getByRole('button', { name: 'Move Touch child', exact: true }).click();
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Photos / Touch child', exact: true })).toBeDisabled();
-  await page.getByRole('dialog').getByRole('button', { name: 'Folders (top level)', exact: true }).click();
-  await path.getByRole('button', { name: 'Folders', exact: true }).click();
-  await expect(children.getByRole('button', { name: 'Touch child', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Upload', exact: true })).toHaveCount(0);
-});
-
 test('a delayed automatic sync reply cannot undo a newly created child', async ({ page }) => {
   await desktopFixture(page);
   await page.goto('/');

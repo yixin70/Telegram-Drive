@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Platform support
+- Retired macOS, Linux and all Android builds/releases, mobile UI, TV navigation, mobile capabilities and Android packaging/emulator targets. Windows x64 is the only supported application platform; mobile CLI builds are explicitly rejected.
+- Preserved the Windows application identifier, credential identity and user data. Historical APKs are unchanged, not revoked, and no replacement APK is required. Android-source publication protections remain in force.
+
 ### Personal-use build: every feature free, paid supporter license removed
 
 - Remove the optional $5 lifetime ad-free supporter license entirely: the client offer, license and recovery settings UI, and the supporter Rust/Tauri commands and IPC bridge; the Cloudflare Worker verification service, PayPal checkout, recovery lookup, and D1 entitlement database; and the release workflows, scripts, tests, and protected-contract documentation that supported it.

@@ -67,7 +67,7 @@ test('axe accessibility audit has no violation groups', async ({ page }) => {
   expect(result.violations ?? []).toEqual([]);
 });
 
-for (const fixture of ['auth', 'dashboard', 'settings', 'dialog', 'mobile']) {
+for (const fixture of ['auth', 'dashboard', 'settings', 'dialog']) {
   test(`real ${fixture} screen passes axe`, async ({ page }) => {
     await page.goto(`/?a11y-fixture=${fixture}&a11y-audit`);
     await page.locator(`html[data-a11y-fixture-ready="${fixture}"]`).waitFor({ timeout: 15_000 });
@@ -97,14 +97,4 @@ test('share dialog retains a keyboard-operable close path', async ({ page }) => 
   await expect(dialog.locator(':focus')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-});
-
-test('mobile primary navigation is keyboard operable', async ({ page }) => {
-  await page.goto('/?a11y-fixture=mobile');
-  const navigation = page.getByRole('navigation', { name: 'Primary' });
-  await expect(navigation).toBeVisible();
-  const transfers = navigation.getByRole('button', { name: /Transfers/i });
-  await transfers.focus();
-  await page.keyboard.press('Enter');
-  await expect(transfers).toHaveAttribute('aria-current', 'page');
 });

@@ -20,20 +20,13 @@ export interface TelegramFile {
   offline_available?: boolean;
 }
 
-export type SmartView = 'recents' | 'favorites' | 'pinned' | 'offline' | 'large' | 'old' | 'duplicates';
+export type SmartView = 'recents' | 'favorites' | 'pinned' | 'offline';
 
 export interface OfflineCacheStatus {
   file_count: number;
   total_bytes: number;
   max_files: number;
   max_bytes: number;
-}
-
-export interface StorageInsightResult {
-  files: TelegramFile[];
-  complete: boolean;
-  scanned_count: number;
-  duplicate_groups: number;
 }
 
 export interface TelegramFolder {

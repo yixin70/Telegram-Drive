@@ -18,8 +18,6 @@
     "i18n:scan": "node scripts/i18n/scan-ui-literals.cjs",
     "i18n:pseudo": "node scripts/i18n/generate-pseudo-locales.cjs",
     "i18n:check": "npm run i18n:validate && npm run i18n:scan",
-    "android:jni:check": "node scripts/check-android-jni-contract.cjs",
-    "android:version:check": "node scripts/verify-android-release-version.cjs",
     "release:version:check": "node ../scripts/release-tag-policy.cjs --app-root .",
     "visual:test": "playwright test",
     "visual:update": "playwright test --update-snapshots",

@@ -11,9 +11,13 @@ for (const name of fs.readdirSync(root).filter(name => /\.ya?ml$/.test(name))) {
 }
 const assurance = fs.readFileSync(path.join(root, 'dependency-assurance.yml'), 'utf8');
 if (!/\n  schedule:/.test(assurance) || !/\n  baseline-expiry:/.test(assurance)) throw new Error('Scheduled baseline-expiry gate must remain');
-const release = fs.readFileSync(path.join(root, 'release.yml'), 'utf8');
-for (const platform of ['macos', 'windows']) if (!release.includes(`if: env.PLATFORM_SIGNING == '${platform}'`)) throw new Error(`Missing conditional ${platform} signature gate`);
-const pages = fs.readFileSync(path.join(root, 'pages.yml'), 'utf8');
+const release = fs.readFileSync(path.join(root, 'release.yml'), 'utf8').replace(/\r\n/g, '\n');
+if (!release.includes("if: env.PLATFORM_SIGNING == 'windows'")) throw new Error('Missing conditional Windows signature gate');
+const nativeBuild = release.split('\n  build-tauri:\n')[1]?.split('\n  release-assurance:\n')[0];
+const nativePlatforms = [...(nativeBuild ?? '').matchAll(/^\s+- platform:\s*(\S+)/gm)].map(match => match[1]);
+if (nativePlatforms.length !== 1 || nativePlatforms[0] !== 'windows-latest') throw new Error('Native release matrix must contain Windows only');
+if (/^  build-arch:/m.test(release) || fs.existsSync(path.join(root, 'arch-package.yml'))) throw new Error('Retired Arch publication must not be enabled');
+const pages = fs.readFileSync(path.join(root, 'pages.yml'), 'utf8').replace(/\r\n/g, '\n');
 if (/^  release:/m.test(pages)) throw new Error('Pages must not deploy directly from a release tag; its protected environment permits only main');
 if (!/^    if: github\.ref == 'refs\/heads\/main'$/m.test(pages)) throw new Error('Pages deployment must be restricted to main');
 if (/^concurrency:/m.test(pages) || !/^    concurrency:\n      group: pages\n      cancel-in-progress: true$/m.test(pages)) throw new Error('Pages concurrency must apply only to the permitted deployment job');

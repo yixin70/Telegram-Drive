@@ -3,22 +3,20 @@ import { desktopFixture, nativeCalls, openSettings } from './desktop-fixture';
 
 // Exercise the desktop application entry point, with only native/Telegram IPC
 // simulated. Platform flags do not turn this entry point into MobileDashboard
-// and do not establish native Android/TV behavior.
+// and do not establish native Android behavior.
 // Never contact the former advertising providers during this test.
-for (const platform of ['desktop', 'android', 'tv'] as const) {
+for (const platform of ['desktop'] as const) {
   test(`desktop shell with ${platform} flags stays free without ads or purchase prompts`, async ({ page }) => {
     await page.clock.install();
     const adRequests: string[] = [];
     await desktopFixture(page, {
-      platform: platform === 'desktop' ? 'windows' : 'android',
-      isTelevision: platform === 'tv',
+      platform: 'windows',
       gatewaySeen: false,
     });
     await page.route(/effectivecpmnetwork|highperformanceformat|\/ad-(banner|script)/, route => {
       adRequests.push(route.request().url());
       return route.abort();
     });
-    if (platform !== 'desktop') await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await expect(page.getByText('Holiday folder photo.jpg', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('iframe[src*="/ad-banner"]')).toHaveCount(0);

@@ -89,46 +89,6 @@ test('populated Transfer Center actions and states pass axe through the native e
   await expect(center).not.toContainText('Fixture finished.bin');
 });
 
-test('TV directional navigation reaches scrollable content and stays within an open dialog',async ({page})=>{
-  await desktopFixture(page,{encryptionReady:true,vaultState:'unlocked'});
-  await page.goto('/?a11y-fixture=tv');
-  const top=page.getByRole('button',{name:'Top item',exact:true});await expect(top).toBeVisible();
-  await top.focus();await page.keyboard.press('ArrowDown');
-  const below=page.getByRole('button',{name:'Below fold',exact:true});
-  await expect(below).toBeFocused();await expect(below).toBeInViewport();
-  expect(await page.getByTestId('tv-scroll-region').evaluate(element=>element.scrollTop)).toBeGreaterThan(0);
-  const open=page.getByRole('button',{name:'Open settings',exact:true});await open.click();
-  const dialog=page.getByRole('dialog',{name:'Settings',exact:true});await expect(dialog).toBeVisible();
-  await dialog.getByRole('button',{name:'Close',exact:true}).focus();
-  for(const key of ['ArrowDown','ArrowLeft','ArrowUp','ArrowRight']) {
-    await page.keyboard.press(key);
-    expect(await dialog.evaluate(element=>element.contains(document.activeElement))).toBe(true);
-  }
-  await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(open).toBeFocused();
-});
-
-test('TV native fields retain caret, number and selection arrow behavior',async ({page})=>{
-  await desktopFixture(page);await page.goto('/?a11y-fixture=tv');
-  const text=page.getByRole('textbox',{name:'Text input',exact:true});await text.fill('abc');await text.press('End');await text.press('ArrowLeft');
-  await expect(text).toBeFocused();expect(await text.evaluate(element=>(element as HTMLInputElement).selectionStart)).toBe(2);
-  const number=page.getByRole('spinbutton',{name:'Number input',exact:true});await number.fill('1');await number.press('ArrowUp');await expect(number).toBeFocused();await expect(number).toHaveValue('2');
-  // The identical control establishes Chromium's native keyboard sequence.
-  // ArrowDown opens this host's picker; type-ahead selects and Enter commits.
-  for(const mode of ['tv-control','tv']) {
-    await page.goto(`/?a11y-fixture=${mode}`);
-    const select=page.getByRole('combobox',{name:'Native choice',exact:true});
-    await select.evaluate(element=>{
-      (window as any).__nativeArrowCancelled=[];
-      element.addEventListener('keydown',event=>{
-        if((event as KeyboardEvent).key==='ArrowDown')(window as any).__nativeArrowCancelled.push(event.defaultPrevented);
-      });
-    });
-    await select.focus();await select.press('ArrowDown');await select.press('s');await select.press('Enter');
-    await expect(select).toBeFocused();await expect(select).toHaveValue('b');
-    expect(await page.evaluate(()=>(window as any).__nativeArrowCancelled)).toEqual([false]);
-  }
-});
-
 test('vault creation, recovery drill, lock and unlock remain keyboard accessible',async ({page})=>{
   await desktopFixture(page,{encryptionReady:true,vaultState:'none'});await page.goto('/');
   const dialog=await encryption(page);
@@ -181,46 +141,4 @@ test('a recovery-import confirmation can be cancelled with Escape without closin
   await page.keyboard.press('Escape');await expect(confirm).toHaveCount(0);
   await expect(settings).toBeVisible();await expect(opener).toBeFocused();
   expect(await nativeCalls(page,'cmd_import_vault_recovery')).toEqual([]);
-});
-
-test('TV Escape exits native field editing and arrows can leave the field without Tab',async ({page})=>{
-  await desktopFixture(page,{encryptionReady:true,vaultState:'unlocked'});await page.goto('/?a11y-fixture=tv');
-  for(const name of ['Edge number','Fixed edge number']) {
-    const edge=page.getByRole('spinbutton',{name,exact:true});
-    await edge.focus();await edge.press('Escape');await edge.press('ArrowUp');
-    await expect(edge).toBeFocused();await expect(edge).toHaveValue('1');
-  }
-  const text=page.getByRole('textbox',{name:'Text input',exact:true});
-  await page.getByRole('button',{name:'Open settings',exact:true}).focus();await page.keyboard.press('ArrowDown');
-  await expect(text).toBeFocused();
-  await text.press('End');await text.press('ArrowLeft');expect(await text.evaluate(element=>(element as HTMLInputElement).selectionStart)).toBe(2);
-  await text.press('Escape');await text.press('ArrowRight');
-  const number=page.getByRole('spinbutton',{name:'Number input',exact:true});await expect(number).toBeFocused();
-  await number.press('ArrowUp');await expect(number).toHaveValue('2');
-  await number.press('Escape');await number.press('Enter');await number.press('ArrowUp');await expect(number).toHaveValue('3');
-  await number.press('Escape');await number.press('ArrowRight');
-  const select=page.getByRole('combobox',{name:'Native choice',exact:true});await expect(select).toBeFocused();
-  // Type-ahead edits the native value without opening an OS picker (ArrowDown
-  // opens one on Windows, where its Escape never reaches the field handler).
-  // Navigate left to the adjacent number, independent of native control heights.
-  await select.press('s');await expect(select).toHaveValue('b');
-  await select.press('Escape');await select.press('ArrowLeft');
-  await expect(number).toBeFocused();
-  await number.press('Escape');await number.press('Tab');await page.keyboard.press('Shift+Tab');
-  await expect(number).toBeFocused();
-  const previous=Number(await number.inputValue());await number.press('ArrowUp');await expect(number).toHaveValue(String(previous+1));
-  await number.press('Escape');await number.evaluate(element=>(element as HTMLElement).blur());await number.focus();
-  await number.press('ArrowUp');await expect(number).toHaveValue(String(previous+2));
-  await page.getByRole('button',{name:'Open settings',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
-  await dialog.getByRole('button',{name:'Encryption',exact:true}).click();
-  const protection=dialog.getByRole('combobox').first();await protection.focus();
-  await page.keyboard.down('Escape');await expect(dialog).toBeVisible();
-  await page.keyboard.down('Escape');await page.waitForTimeout(250);await expect(dialog).toBeVisible();await page.keyboard.up('Escape');
-  await page.keyboard.press('Escape');await expect(dialog).toBeHidden();
-  await page.getByRole('button',{name:'Open settings',exact:true}).click();
-  await dialog.getByRole('button',{name:'Encryption',exact:true}).click();
-  await protection.focus();await protection.press('Escape');await protection.press('ArrowDown');
-  await expect(protection).not.toBeFocused();expect(await dialog.evaluate(element=>element.contains(document.activeElement))).toBe(true);
-  await dialog.getByRole('button',{name:'Close',exact:true}).press('Escape');await expect(dialog).toBeHidden();
 });

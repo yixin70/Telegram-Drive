@@ -14,7 +14,6 @@ pub mod desktop_tray;
 pub(crate) mod desktop_video_upload;
 pub mod installation;
 mod ipc_dispatch;
-pub mod linux_startup;
 pub mod models;
 mod multipart;
 #[cfg(feature = "native-e2e")]
@@ -96,7 +95,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub mod android_security;
 pub mod api_catalog;
 pub mod api_secret;
 pub mod crypto_commands;
@@ -410,6 +408,7 @@ async fn cmd_open_file_externally(
     }
 }
 
+#[cfg(target_os = "android")]
 #[tauri::command]
 fn cmd_open_android_stream_player(
     stream_url: String,
@@ -473,6 +472,7 @@ fn cmd_open_android_stream_player(
     }
 }
 
+#[cfg(target_os = "android")]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AndroidPlaybackHistoryEntry {
@@ -484,6 +484,7 @@ struct AndroidPlaybackHistoryEntry {
     last_played_at: u64,
 }
 
+#[cfg(target_os = "android")]
 #[tauri::command]
 fn cmd_get_android_playback_history() -> Result<Vec<AndroidPlaybackHistoryEntry>, String> {
     #[cfg(target_os = "android")]
@@ -1235,13 +1236,11 @@ pub(crate) fn invoke_handler(
         commands::cmd_get_files,
         commands::cmd_get_cached_files,
         commands::cmd_upload_file,
-        commands::cmd_stage_android_upload,
         commands::cmd_delete_android_staged_upload,
         commands::cmd_validate_dropped_paths,
         commands::initiate_upload,
         commands::cmd_upload_from_url,
         cmd_open_file_externally,
-        cmd_open_android_stream_player,
         upload_service::cmd_start_foreground_service,
         upload_service::cmd_stop_foreground_service,
         upload_service::cmd_update_foreground_service,
@@ -1278,7 +1277,6 @@ pub(crate) fn invoke_handler(
         commands::cmd_set_file_activity_flag,
         commands::cmd_get_file_activity,
         commands::cmd_get_startup_health,
-        commands::cmd_get_storage_insight,
         commands::cmd_submit_crash_report,
         commands::cmd_get_settings_sync_status,
         commands::cmd_upload_settings_sync,
@@ -1295,9 +1293,6 @@ pub(crate) fn invoke_handler(
         commands::cmd_resolve_conflict,
         commands::cmd_check_connection,
         commands::cmd_is_network_available,
-        commands::cmd_get_android_network_status,
-        commands::cmd_get_android_transfer_environment,
-        commands::cmd_configure_android_transfer_recovery,
         commands::cmd_test_proxy_traffic,
         commands::cmd_reconnect_with_network_settings,
         commands::cmd_clean_cache,
@@ -1374,14 +1369,10 @@ pub(crate) fn invoke_handler(
         commands::cmd_export_folder_invite,
         cmd_get_pending_share_count,
         cmd_get_pending_android_transfer_action,
-        cmd_get_android_playback_history,
         cmd_list_cached_files,
         cmd_remove_cached_path,
         cmd_get_system_diagnostics,
         installation::cmd_get_installation_info,
-        android_security::cmd_get_android_authentication_available,
-        android_security::cmd_android_authenticate,
-        android_security::cmd_configure_android_privacy,
         commands::cmd_get_video_metadata,
         transcode::cmd_get_transcode_capabilities,
         transcode::cmd_prepare_transcoded_stream,

@@ -1,6 +1,6 @@
 # Linux and Arch compatibility implementation plan
 
-Status: implemented locally; CI and real-device acceptance remain required before a release is published.
+Status: retired; historical design only. Linux/Arch builds and publication are no longer supported by this checkout. Do not execute this plan as a current release procedure.
 
 ## Assessment of the original plan
 

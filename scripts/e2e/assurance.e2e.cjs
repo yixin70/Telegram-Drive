@@ -485,6 +485,18 @@ setInterval(()=>{},1000);
   assert.notEqual(waiting.status, 0); assert.match(waiting.stderr, /readiness/);
 });
 
+test('application CLI rejects retired mobile builds before SDK or native tooling', t => {
+  const directory = fixture(t);
+  for (const platform of ['android', 'ios']) {
+    const result = spawnSync(process.execPath, [path.join(scripts, '../app/scripts/tauri-cli.cjs'), platform, 'build'], {
+      encoding: 'utf8', timeout: 15000, env: { ...process.env, ANDROID_HOME: directory, ANDROID_SDK_ROOT: directory },
+    });
+    assert.ifError(result.error); assert.equal(result.status, 1);
+    assert.match(result.stderr, /supports only Windows; mobile builds are retired/);
+    assert.deepEqual(fs.readdirSync(directory), []);
+  }
+});
+
 test('RC packaging uses the plain application version for the exact upstream Debian and Arch recipe', t => {
   const directory = fixture(t);
   const policy = run('release-tag-policy.cjs', '--tag', 'v4.0.0-rc.1'); success(policy);

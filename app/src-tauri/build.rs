@@ -2,11 +2,10 @@
 mod search_support;
 
 fn main() {
+    let target = std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo target OS");
+    assert!(target == "windows", "Telegram Drive supports only Windows");
     search_support::verify_search_support();
     build_native_catalogs();
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-        println!("cargo:rustc-link-lib=c++_shared");
-    }
     tauri_build::build()
 }
 

@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../context/SettingsContext';
 import { useEncryption } from '../../hooks/useEncryption';
 import { EncryptionTransparencyDialog } from './EncryptionTransparencyDialog';
-import { requireAndroidReauthentication } from '../../services/androidReauthentication';
 import { useConfirm } from '../../context/ConfirmContext';
 
 function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType<typeof useEncryption>; onComplete: () => void }) {
@@ -24,7 +23,6 @@ function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType
         if (recoveryPassphrase.length < 8) return;
         setBusy(true);
         try {
-            await requireAndroidReauthentication(t('protection_labels.auth_export'));
             setBundle(await encryption.exportRecovery(recoveryPassphrase));
         } catch (error) {
             toast.error(t('recovery_copy.export_failed', { error: String(error) }));
@@ -37,7 +35,6 @@ function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType
         if (!verifyBundle.trim() || !verifyPassphrase) return;
         setBusy(true);
         try {
-            await requireAndroidReauthentication(t('protection_labels.auth_check'));
             // Verification only: the vault file, its passphrase and its keys
             // are left exactly as they are.
             const result = await encryption.verifyRecovery(verifyBundle.trim(), verifyPassphrase);
@@ -94,7 +91,6 @@ function ExportRecoverySection({ encryption }: { encryption: ReturnType<typeof u
         if (!exportPassphrase) return;
         setExporting(true);
         try {
-            await requireAndroidReauthentication(t('protection_labels.auth_export'));
             const bundle = await encryption.exportRecovery(exportPassphrase);
             setExportedBundle(bundle);
             toast.success(t('settings.export_success'));
@@ -196,7 +192,6 @@ function ImportRecoverySection({ encryption, vaultUnlocked }: { encryption: Retu
         if (!accepted) return;
         setImporting(true);
         try {
-            await requireAndroidReauthentication(t('protection_labels.auth_import'));
             const options = { vaultPassphrase: needsVaultPassphrase ? vaultPassphrase : undefined };
             try {
                 await encryption.importRecovery(importBundle.trim(), importPassphrase, options);
@@ -376,7 +371,6 @@ export function EncryptionSettingsSection({ vaultOnly = false }: { vaultOnly?: b
         }
         setChangingVaultPassphrase(true);
         try {
-            await requireAndroidReauthentication(t('protection_labels.auth_change'));
             await encryption.changeVaultPassphrase(currentVaultPassphrase, newVaultPassphrase);
             setCurrentVaultPassphrase('');
             setNewVaultPassphrase('');
