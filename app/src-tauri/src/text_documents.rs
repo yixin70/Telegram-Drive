@@ -89,17 +89,18 @@ impl Access {
         // File type and name come from authenticated metadata, never an IPC name.
         if metadata.is_empty() {
             return Err(
-                "[TEXT_TYPE_UNSUPPORTED] An authenticated .txt filename is required".into(),
+                "[TEXT_TYPE_UNSUPPORTED] An authenticated .txt or .md filename is required".into(),
             );
         }
         let value: serde_json::Value =
             serde_json::from_slice(&metadata).map_err(|e| e.to_string())?;
         if value["schema_version"] != 1
-            || !value["original_name"]
-                .as_str()
-                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".txt"))
+            || !value["original_name"].as_str().is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.ends_with(".txt") || name.ends_with(".md")
+            })
         {
-            return Err("[TEXT_TYPE_UNSUPPORTED] Only .txt documents can be edited".into());
+            return Err("[TEXT_TYPE_UNSUPPORTED] Only .txt and .md documents can be edited".into());
         }
         let access = Self {
             account,

@@ -19,8 +19,10 @@ export async function desktopFixture(page: Page, options: {
   settings?: Record<string, unknown>;
   /** Base64 PDF listed as "Fixture report.pdf" and served through the preview command. */
   pdfBase64?: string;
-  /** Plain-text body listed as "Fixture notes.txt" and served through the text commands. */
+  /** Text body served through the controlled text commands. */
   textContent?: string;
+  textFilename?: string;
+  textTruncated?: boolean;
   protectedText?: boolean;
   textRequirePassphrase?: 'read' | 'save';
   holdTextRead?: boolean;
@@ -246,7 +248,11 @@ export async function desktopFixture(page: Page, options: {
             const files = [{ ...file(42, args.folderId, owner), ...(state.inventoryName ? { name: state.inventoryName } : {}) }];
             if (options.extraPhoto) files.push({...file(43,args.folderId,owner),name:'Holiday second photo.jpg'});
             if (options.pdfBase64) files.push({ ...file(77, args.folderId, owner), name: 'Fixture report.pdf', mime_type: 'application/pdf', file_ext: 'pdf', type: 'document' });
-            if (options.textContent !== undefined) files.push({ ...file(state.textMessageId, args.folderId, owner), name: 'Fixture notes.txt', mime_type: 'text/plain', file_ext: 'txt', type: 'document', encryption_state: options.protectedText ? 'encrypted_unlocked' : 'plain' });
+            if (options.textContent !== undefined) {
+              const name = options.textFilename ?? 'Fixture notes.txt';
+              const extension = name.split('.').pop()!.toLowerCase();
+              files.push({ ...file(state.textMessageId, args.folderId, owner), name, mime_type: extension === 'md' ? 'text/markdown' : 'text/plain', file_ext: extension, type: 'document', encryption_state: options.protectedText ? 'encrypted_unlocked' : 'plain' });
+            }
             const result = { ownerId: owner, folderId: args.folderId, requestId: args.requestId, files };
             state.emit('folder-load-chunk', result);
             state.completedFileRequests.push({ ownerId: owner, requestId: args.requestId });
@@ -261,7 +267,7 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_read_text_file' && state.textContent !== undefined) {
             if (options.textRequirePassphrase === 'read' && !args.promptToken) throw '[KEY_REQUIRED] File passphrase required';
             if (state.holdTextRead) await textGate;
-            return { content: state.textContent, size: new TextEncoder().encode(state.textContent).length, truncated: false, encoding: 'utf-8', encrypted: options.protectedText ?? false, ownerId: '101', accessGeneration: 1 };
+            return { content: state.textContent, size: new TextEncoder().encode(state.textContent).length, truncated: options.textTruncated ?? false, encoding: 'utf-8', encrypted: options.protectedText ?? false, ownerId: '101', accessGeneration: 1 };
           }
           if (command === 'cmd_save_text_file') {
             if (options.textRequirePassphrase && !args.promptToken) throw '[KEY_REQUIRED] File passphrase required';

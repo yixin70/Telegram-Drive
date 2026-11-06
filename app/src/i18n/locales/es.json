@@ -1107,7 +1107,12 @@
     "text_saved": "Guardado.",
     "text_save_error": "No se pudo guardar. Inténtalo de nuevo.",
     "text_discard_confirm": "¿Descartar los cambios sin guardar?",
-    "text_revert": "Revertir"
+    "text_revert": "Revertir",
+    "markdown_edit": "Editar Markdown",
+    "markdown_preview": "Vista previa de Markdown",
+    "markdown_preview_region": "Vista previa de Markdown",
+    "markdown_image": "Imagen",
+    "markdown_image_blocked": "[Imagen bloqueada: {{alt}}]"
   },
   "operations": {
     "delete_file": "Eliminar archivo",

@@ -409,6 +409,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setPreviewContextFiles([]);
         setPreviewContextIndex(-1);
         setArchiveViewFile(null);
+        setTextViewFile(null);
     }, [accountId, activeFolderId, activeSmartView]);
 
 
@@ -588,7 +589,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const navigatePreview = useCallback((step: 1 | -1) => {
         const next = getAdjacentPreview(
             previewContextFiles,
-            previewFile ?? playingFile ?? pdfFile ?? archiveViewFile,
+            previewFile ?? playingFile ?? pdfFile ?? archiveViewFile ?? textViewFile,
             step,
         );
         if (!next) return;

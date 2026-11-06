@@ -1,0 +1,31 @@
+.markdown-modes button[aria-pressed="true"] { background: rgb(255 255 255 / 15%); box-shadow: inset 0 -2px var(--color-app-accent); }
+.markdown-preview {
+    overflow-wrap: anywhere;
+    line-height: 1.7;
+    color: rgb(255 255 255 / 90%);
+}
+.markdown-preview > :first-child { margin-top: 0; }
+.markdown-preview > :last-child { margin-bottom: 0; }
+.markdown-preview :is(p, ul, ol, blockquote, pre, table) { margin-block: 1em; }
+.markdown-preview :is(h1, h2, h3, h4, h5, h6) { margin-block: 1.3em .5em; font-weight: 650; line-height: 1.3; }
+.markdown-preview h1 { font-size: 2em; }
+.markdown-preview h2 { font-size: 1.5em; }
+.markdown-preview h3 { font-size: 1.25em; }
+.markdown-preview :is(h4, h5, h6) { font-size: 1em; }
+.markdown-preview :is(ul, ol) { padding-inline-start: 1.8em; }
+.markdown-preview ul { list-style: disc; }
+.markdown-preview ol { list-style: decimal; }
+.markdown-preview li > :is(ul, ol) { margin-block: .3em; }
+.markdown-preview .contains-task-list { list-style: none; padding-inline-start: .3em; }
+.markdown-preview input[type="checkbox"] { margin-inline-end: .5em; accent-color: var(--color-app-accent); }
+.markdown-preview blockquote { border-inline-start: 3px solid rgb(255 255 255 / 30%); padding-inline-start: 1em; color: rgb(255 255 255 / 70%); }
+.markdown-preview a { color: var(--color-app-accent, #7dd3fc); text-decoration: underline; text-underline-offset: .15em; }
+.markdown-preview a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.markdown-preview code { border-radius: .25em; background: rgb(255 255 255 / 8%); padding: .15em .35em; font-family: monospace; font-size: .9em; }
+.markdown-preview pre { max-width: 100%; overflow: auto; border-radius: .5em; background: rgb(0 0 0 / 30%); padding: 1em; }
+.markdown-preview pre code { background: transparent; padding: 0; }
+.markdown-preview table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; }
+.markdown-preview :is(th, td) { border: 1px solid rgb(255 255 255 / 20%); padding: .45em .8em; }
+.markdown-preview th { background: rgb(255 255 255 / 7%); font-weight: 650; }
+.markdown-preview hr { margin-block: 1.5em; border-color: rgb(255 255 255 / 20%); }
+.markdown-preview .markdown-image { color: rgb(255 255 255 / 60%); font-style: italic; }

@@ -20,6 +20,29 @@ On Windows, do not replace executables used by another running suite. A separate
 linked test executable may select a separately linked driver through the test-only
 `NATIVE_E2E_DRIVER` environment variable; the default remains Cargo's driver path.
 
+## Markdown and text documents
+
+`.md` filenames (including `.MD`) open in rendered Preview mode. Edit Markdown
+shows the source; Preview Markdown renders the current unsaved draft. Save,
+Ctrl/Cmd+S, Revert and discard confirmations use the same workflow as `.txt`.
+Raw HTML is disabled, embedded images are text-only, and only absolute HTTP(S)
+and mail links can open through the system handler; relative/local paths are not
+resolved. The existing 1 MiB native document limit also applies to Markdown.
+
+From `app/`, run
+`npx playwright test tests/e2e/markdown-preview.spec.ts tests/e2e/text-preview.spec.ts --workers=2`.
+These real-UI journeys use a controlled native boundary for rendering, editing,
+two successive saves/reopening, failure retention, discard/revert/navigation,
+malicious content, vault/account withdrawal and masked passphrase prompts.
+
+From the repository root, run
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e protected_text_ -- --test-threads=1`.
+The native child-process journeys exercise authenticated Markdown filenames,
+vault/passphrase/dual-mode replacement and restart, the size boundary, wrong
+keys, corrupted ciphertext, revoked access, and failed publication/deletion.
+Their Telegram boundary is controlled. Installed Windows WebView behavior and
+live Telegram upload/reopen remain a manual acceptance check before release.
+
 ## Multipart deletion retries
 
 `cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e multipart_telegram_ -- --test-threads=1`
