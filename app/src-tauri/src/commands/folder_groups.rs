@@ -42,7 +42,8 @@ pub async fn cmd_get_enriched_folders(
             )
         })
         .transpose()?;
-    crate::db::with_connection(database, move |conn| {
+    let expected_owner = scope.as_ref().and_then(|(_, owner)| *owner);
+    let folders = crate::db::with_connection(database, move |conn| {
         if let Some(account) = &account {
             account.validate()?;
         }
@@ -51,7 +52,8 @@ pub async fn cmd_get_enriched_folders(
         }
         enriched_folders(conn)
     })
-    .await
+    .await?;
+    crate::folder_names::project_app(&app, expected_owner, folders)
 }
 
 pub(crate) fn enriched_folders(conn: &sqlite::Connection) -> Result<Vec<FolderMetadata>, String> {
@@ -98,6 +100,8 @@ pub(crate) fn enriched_folders(conn: &sqlite::Connection) -> Result<Vec<FolderMe
                 is_public,
                 group_id,
                 display_order,
+                is_encrypted: false,
+                is_locked: false,
             });
         }
 
@@ -417,10 +421,21 @@ pub fn get_enriched_folders_internal(
     }
 
     // 2. Perform merge & upsert
+    let protected_names: std::collections::HashMap<_, _> = enriched_folders(conn)?
+        .into_iter()
+        .filter(|f| crate::folder_names::protected(&f.name))
+        .map(|f| (f.id, f.name))
+        .collect();
     let mut enriched = Vec::new();
     let mut max_order = local_map.values().map(|(o, _, _)| *o).max().unwrap_or(0);
 
     for mut folder in raw_folders {
+        // An external channel-title change cannot silently remove protection.
+        if !crate::folder_names::protected(&folder.name) {
+            if let Some(name) = protected_names.get(&folder.id) {
+                folder.name = name.clone();
+            }
+        }
         if let Some(&(order, group_id, parent_id)) = local_map.get(&folder.id) {
             folder.display_order = order;
             folder.group_id = group_id;

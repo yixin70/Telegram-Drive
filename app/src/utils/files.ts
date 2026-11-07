@@ -1,7 +1,6 @@
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi'] as const;
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'opus'] as const;
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'] as const;
-const TEXT_EXTENSIONS = ['txt'] as const;
 
 const endsWithAny = (name: string, extensions: readonly string[]): boolean => {
   const lower = name.toLowerCase();
@@ -28,7 +27,8 @@ export const isMediaFile = (name: string, mimeType?: string | null): boolean =>
   isVideoFile(name, mimeType) || isAudioFile(name, mimeType);
 export const isImageFile = (name: string): boolean => endsWithAny(name, IMAGE_EXTENSIONS);
 export const isPdfFile = (name: string): boolean => name.toLowerCase().endsWith('.pdf');
-export const isTextFile = (name: string): boolean => endsWithAny(name, TEXT_EXTENSIONS);
+export const isMarkdownFile = (name: string): boolean => name.toLowerCase().endsWith('.md');
+export const isTextFile = (name: string): boolean => name.toLowerCase().endsWith('.txt') || isMarkdownFile(name);
 export const isZipFile = (name: string): boolean => name.toLowerCase().endsWith('.zip');
 export const isRarFile = (name: string): boolean => name.toLowerCase().endsWith('.rar');
 export const isSevenZFile = (name: string): boolean => name.toLowerCase().endsWith('.7z');

@@ -656,7 +656,10 @@ pub async fn cmd_sync_folder_hierarchy(
 ) -> Result<Snapshot, String> {
     let account = AccountGuard::open(&app.path().app_data_dir().map_err(err)?, Some(&owner_id))?;
     let _gate = GATE.lock().await;
-    sync_locked(&account, db.inner().clone(), state.inner()).await
+    let mut snapshot = sync_locked(&account, db.inner().clone(), state.inner()).await?;
+    snapshot.folders =
+        crate::folder_names::project_app(&app, Some(account.owner), snapshot.folders)?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -670,8 +673,14 @@ pub async fn cmd_move_folder(
 ) -> Result<Snapshot, String> {
     let account = AccountGuard::open(&app.path().app_data_dir().map_err(err)?, Some(&owner_id))?;
     let _gate = GATE.lock().await;
-    crate::db::with_connection(db.inner().clone(), move |conn| {
+    let owner = account.owner;
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    crate::folder_names::ensure_readable(&account, &crypto, Some(folder_id))?;
+    crate::folder_names::ensure_readable(&account, &crypto, parent_id)?;
+    let mut snapshot = crate::db::with_connection(db.inner().clone(), move |conn| {
         move_at(conn, &account, folder_id, parent_id, display_order)
     })
-    .await
+    .await?;
+    snapshot.folders = crate::folder_names::project_app(&app, Some(owner), snapshot.folders)?;
+    Ok(snapshot)
 }

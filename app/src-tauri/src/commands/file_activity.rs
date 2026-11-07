@@ -287,9 +287,21 @@ pub async fn cmd_get_file_activity(
 ) -> Result<Vec<LocalFileActivity>, String> {
     let root = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let account = AccountGuard::open(&root, owner_id.as_deref())?;
+    let crypto = app
+        .state::<crate::crypto::state::CryptoState>()
+        .inner()
+        .clone();
     tokio::task::spawn_blocking(move || {
         account.validate()?;
-        let files = read_activity(&Store::open(&account.root, account.owner)?, &view, limit)?;
+        let mut files = read_activity(&Store::open(&account.root, account.owner)?, &view, limit)?;
+        let raw = crate::folder_names::cached(&account)?;
+        let projected = crate::folder_names::project(&crypto, account.owner, raw.clone());
+        files.retain(|f| {
+            f.file.folder_id.is_none_or(|id| {
+                !crate::folder_names::has_protected_ancestor(&raw, id)
+                    || projected.iter().any(|f| f.id == id && !f.is_locked)
+            })
+        });
         account.validate()?;
         Ok(files)
     })

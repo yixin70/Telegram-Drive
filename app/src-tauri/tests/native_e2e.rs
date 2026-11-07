@@ -480,15 +480,22 @@ fn created_file_content_and_owned_cleanup_cross_restart_and_protected_envelopes(
 
 #[test]
 fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
-    for mode in ["vault", "passphrase", "vault_and_passphrase"] {
+    for (mode, name) in [
+        ("vault", "private.txt"),
+        ("passphrase", "private.txt"),
+        ("vault_and_passphrase", "private.txt"),
+        ("vault", "private.md"),
+        ("passphrase", "private.MD"),
+        ("vault_and_passphrase", "private.MD"),
+    ] {
         let fixture = Fixture::new();
         let mut app = Backend::start(&fixture.0);
         app.ok(json!({"command":"seed_account","owner":101}));
         app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-        fixture.write("private.txt", b"original secret\r\n");
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,
+        fixture.write(name, b"original secret\r\n");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true,
             "protectionMode":mode,"filePassphrase":"synthetic file password"}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
+        std::fs::remove_file(fixture.path(name)).unwrap();
         let original = fixture.read("original.tdenc");
         let opened = app.ok(json!({"command":"text_read","source":"original.tdenc","filePassphrase":"synthetic file password"}));
         assert_eq!(opened["content"], "original secret\r\n");
@@ -549,9 +556,9 @@ fn protected_text_rejects_wrong_keys_corruption_and_revoked_access_without_delet
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    fixture.write("private.txt", b"keep original");
-    app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
-    std::fs::remove_file(fixture.path("private.txt")).unwrap();
+    fixture.write("private.MD", b"keep original");
+    app.ok(json!({"command":"fixture_encrypt","source":"private.MD","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
+    std::fs::remove_file(fixture.path("private.MD")).unwrap();
     let original = fixture.read("original.tdenc");
     let opened = app.ok(json!({"command":"text_read","source":"original.tdenc"}));
     assert!(app
@@ -595,18 +602,43 @@ fn protected_text_read_enforces_the_one_mib_boundary_without_a_preview_cache() {
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    for size in [1024 * 1024, 1024 * 1024 + 1] {
-        fixture.write("private.txt", vec![b'a'; size]);
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":format!("{size}.tdenc"),"text":true}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
-        let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
-        if size == 1024 * 1024 {
-            assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
-        } else {
-            assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+    for name in ["private.txt", "private.MD"] {
+        for size in [1024 * 1024, 1024 * 1024 + 1] {
+            fixture.write(name, vec![b'a'; size]);
+            app.ok(json!({"command":"fixture_encrypt","source":name,"destination":format!("{size}.tdenc"),"text":true}));
+            std::fs::remove_file(fixture.path(name)).unwrap();
+            let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
+            if size == 1024 * 1024 {
+                assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
+            } else {
+                assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+            }
         }
     }
     assert!(!fixture.path("previews").exists());
+    app.stop();
+}
+
+#[test]
+fn protected_text_rejects_authenticated_non_document_extensions() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+    for name in ["private.cmd", "private.md.exe", "privatemd", "privatetxt"] {
+        fixture.write(name, b"not an editable document");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true}));
+        std::fs::remove_file(fixture.path(name)).unwrap();
+        let original = fixture.read("original.tdenc");
+        assert!(app
+            .failure(json!({"command":"text_read","source":"original.tdenc"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert!(app
+            .failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert_eq!(fixture.read("original.tdenc"), original);
+        assert!(!fixture.path("text-replacement.tdenc").exists());
+    }
     app.stop();
 }
 
@@ -2733,6 +2765,162 @@ fn connection_failures_retry_with_growing_waits_and_removed_transfers_expire() {
         .unwrap();
     dated.next().unwrap();
     assert_eq!(dated.read::<i64, _>(0).unwrap(), 1);
+}
+
+#[test]
+fn folder_name_encryption_survives_lock_restart_recovery_and_rejects_rebinding() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private folder fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    assert!(app
+        .failure(json!({"command":"folder_name_encrypt","folder":11}))
+        .contains("Unlock the vault"));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.failure(json!({"command":"folder_name_encrypt","folder":11,"maskFails":true}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Private folder fixture"
+    );
+    app.ok(json!({"command":"vault_lock"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    let view = app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    assert_eq!(view[0]["name"], "Private folder fixture");
+    assert_eq!(view[0]["is_encrypted"], true);
+    app.ok(json!({"command":"folder_name_rename","folder":11,"name":"Renamed private fixture"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    let record = app.ok(json!({"command":"folder_rows"}))[0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(record.starts_with("TDFOLDERNAME1:"));
+    assert!(!record.contains("Renamed private fixture"));
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-title-11")).unwrap(),
+        "Encrypted [TD] [TD-ENCRYPTED]"
+    );
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-record-11")).unwrap(),
+        record
+    );
+    app.ok(json!({"command":"folder_name_read","folder":12}));
+    app.ok(json!({"command":"vault_export","passphrase":"synthetic folder recovery password"}));
+    app.ok(json!({"command":"vault_lock"}));
+    let locked = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(locked.as_array().unwrap().len(), 1);
+    assert_eq!(locked[0]["name"], "Encrypted");
+    assert_eq!(locked[0]["is_locked"], true);
+    app.failure(json!({"command":"folder_name_read","folder":11}));
+    app.failure(json!({"command":"folder_name_read","folder":12}));
+    app.failure(
+        json!({"command":"folder_name_rename","folder":11,"name":"Locked rename must fail"}),
+    );
+    assert_eq!(app.ok(json!({"command":"folder_rows"}))[0]["name"], record);
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    // A scan or external title edit cannot silently downgrade local protection.
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"External title"},{"id":12,"name":"Child fixture"},{"id":13,"name":record}]}));
+    let rebound = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(rebound[0]["name"], "Renamed private fixture");
+    assert_eq!(
+        rebound
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["id"] == 13)
+            .unwrap()["is_locked"],
+        true
+    );
+    // Fresh installation: only Telegram's ciphertext and vault recovery travel.
+    app.stop();
+    let restored = Fixture::new();
+    restored.write("recovery.bundle", fixture.read("recovery.bundle"));
+    let mut app = Backend::start(&restored.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_recover","passphrase":"synthetic folder recovery password","vaultPassphrase":"synthetic restored folder vault"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    app.ok(json!({"command":"folder_sign_out"}));
+    app.ok(json!({"command":"seed_account","owner":202}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["is_locked"],
+        true
+    );
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn folder_name_encryption_withdraws_stale_webdav_catalogs() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    // Model a Telegram catalog walk started before protection completing late.
+    app.ok(json!({"command":"api_seed_catalog","folders":[{"id":null,"name":"Saved Messages"},{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}],"files":[]}));
+    let token = "f".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let url = format!("{}/dav/{token}/", dav["url"].as_str().unwrap());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let propfind = reqwest::Method::from_bytes(b"PROPFIND").unwrap();
+    for locked in [false, true] {
+        if locked {
+            app.ok(json!({"command":"vault_lock"}));
+        }
+        let response = client
+            .request(propfind.clone(), &url)
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 207);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("Saved%20Messages"));
+        assert!(!body.contains("Private"));
+        assert!(!body.contains("Child"));
+        let direct = client
+            .request(propfind.clone(), format!("{url}Private%20fixture/"))
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert!(!direct.status().is_success());
+    }
+    drop(client);
+    app.stop();
 }
 
 #[test]

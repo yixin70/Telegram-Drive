@@ -82,6 +82,20 @@ These results establish the exercised native boundaries, not live Telegram or
 installed-app acceptance. Live Telegram and installed Windows acceptance above
 have **not** been run.
 
+## Encrypted folder names
+
+From `app/`, run `npx playwright test tests/e2e/folder-encryption.spec.ts tests/e2e/folder-hierarchy.spec.ts --workers=1`.
+The browser journeys use the real frontend with controlled IPC/events for
+encryption confirmation, refusal while locked, lock/unlock withdrawal, rename,
+delayed hierarchy/deletion replies, and confirmation withdrawal. Native command
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e folder_name_encryption -- --test-threads=1`
+crosses child-process restarts, real vault/SQLite persistence, interrupted masking,
+rename, fresh-install recovery, account/folder rebinding rejection, and stale
+WebDAV catalog withdrawal. Telegram publish/title operations use fixture-owned
+files, and WebDAV uses a controlled transport catalog. These checks do not prove
+live Telegram history ordering, title-update behavior, or
+installed WebView integration. See [scope and release acceptance](Docs/FOLDER_NAME_ENCRYPTION.md).
+
 ## Nested folders
 
 From `app/`, `npx playwright test tests/e2e/folder-hierarchy.spec.ts --workers=1`
@@ -99,6 +113,29 @@ See [NESTED_FOLDERS.md](Docs/NESTED_FOLDERS.md) for privacy and release boundari
 On Windows, do not replace executables used by another running suite. A separately
 linked test executable may select a separately linked driver through the test-only
 `NATIVE_E2E_DRIVER` environment variable; the default remains Cargo's driver path.
+
+## Markdown and text documents
+
+`.md` filenames (including `.MD`) open in rendered Preview mode. Edit Markdown
+shows the source; Preview Markdown renders the current unsaved draft. Save,
+Ctrl/Cmd+S, Revert and discard confirmations use the same workflow as `.txt`.
+Raw HTML is disabled, embedded images are text-only, and only absolute HTTP(S)
+and mail links can open through the system handler; relative/local paths are not
+resolved. The existing 1 MiB native document limit also applies to Markdown.
+
+From `app/`, run
+`npx playwright test tests/e2e/markdown-preview.spec.ts tests/e2e/text-preview.spec.ts --workers=2`.
+These real-UI journeys use a controlled native boundary for rendering, editing,
+two successive saves/reopening, failure retention, discard/revert/navigation,
+malicious content, vault/account withdrawal and masked passphrase prompts.
+
+From the repository root, run
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e protected_text_ -- --test-threads=1`.
+The native child-process journeys exercise authenticated Markdown filenames,
+vault/passphrase/dual-mode replacement and restart, the size boundary, wrong
+keys, corrupted ciphertext, revoked access, and failed publication/deletion.
+Their Telegram boundary is controlled. Installed Windows WebView behavior and
+live Telegram upload/reopen remain a manual acceptance check before release.
 
 ## Multipart deletion retries
 

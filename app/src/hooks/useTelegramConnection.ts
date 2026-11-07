@@ -1,6 +1,7 @@
 import i18n from '../i18n';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { load, type Store } from '@tauri-apps/plugin-store';
 import { toast } from 'sonner';
 import { useConfirm } from '../context/ConfirmContext';
@@ -11,6 +12,17 @@ import { userFacingError } from '../services/userFacingError';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { getCurrentAccountId } from '../services/currentAccount';
+
+function lockedFolders(folders: TelegramFolder[], pending: Set<number>): TelegramFolder[] {
+    const masked = folders.map(f => f.is_encrypted || pending.has(f.id)
+        ? { ...f, name: 'Encrypted', is_encrypted: true, is_locked: true } : f);
+    const blocked = new Set(masked.filter(f => f.is_locked).map(f => f.id));
+    for (let changed = true; changed;) {
+        changed = false;
+        for (const f of masked) if (f.parent_id != null && blocked.has(f.parent_id) && !blocked.has(f.id)) { blocked.add(f.id); changed = true; }
+    }
+    return masked.filter(f => f.parent_id == null || !blocked.has(f.parent_id));
+}
 
 export function useTelegramConnection(onLogoutParent: () => void) {
     const queryClient = useQueryClient();
@@ -78,6 +90,8 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const syncAgain = useRef(false);
     const editRevision = useRef(0);
     const editsInProgress = useRef(0);
+    const securityRevision = useRef(0);
+    const pendingEncryption = useRef(new Set<number>());
     const beginEdit = () => {
         editRevision.current++;
         editsInProgress.current++;
@@ -85,6 +99,29 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     };
     const syncFailures = useRef(0);
     const retryAfter = useRef(0);
+
+    useEffect(() => {
+        let disposed = false;
+        const stops: (() => void)[] = [];
+        const refresh = async (locked: boolean) => {
+            const revision = ++securityRevision.current;
+            editRevision.current++;
+            if (locked) {
+                setFolders(previous => lockedFolders(previous, pendingEncryption.current));
+            }
+            const owner = ownerRef.current;
+            if (!owner) return;
+            try {
+                const list = await invoke<TelegramFolder[]>('cmd_get_enriched_folders', { ownerId: owner });
+                if (!disposed && owner === ownerRef.current && revision === securityRevision.current) setFolders(locked ? lockedFolders(list, pendingEncryption.current) : list);
+                await queryClient.invalidateQueries({ queryKey: ['files'] });
+            } catch { /* Retain the fail-closed projection until the next sync. */ }
+        };
+        for (const [event, locked] of [['vault-locked', true], ['vault-unlocked', false]] as const) {
+            void listen(event, () => { void refresh(locked); }).then(stop => { if (disposed) stop(); else stops.push(stop); });
+        }
+        return () => { disposed = true; securityRevision.current++; stops.forEach(stop => stop()); };
+    }, [queryClient]);
 
     // Fetch groups list from DB
     const fetchGroups = useCallback(async () => {
@@ -113,6 +150,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         syncFailures.current = 0;
         if (!accountId) return;
         const initStore = async () => {
+            const revision = securityRevision.current;
             try {
                 let _store = await load('config.json');
                 const checkId = await _store.get<string>('api_id');
@@ -122,7 +160,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 // Fetch local-first SQLite enriched folders
                 try {
                     const dbFolders = await invoke<TelegramFolder[]>('cmd_get_enriched_folders', { ownerId: accountId });
-                    if (!cancelled && dbFolders) {
+                    if (!cancelled && revision === securityRevision.current && dbFolders) {
                         setFolders(dbFolders);
                     }
                 } catch {
@@ -298,10 +336,11 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const handleCreateFolder = async (name: string, parentId: number | null = null) => {
         if (!store || !accountId) throw new Error(t('hierarchy.account_required'));
         const owner = accountId;
+        const revision = securityRevision.current;
         const finish = beginEdit();
         try {
             const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name, parentId, ownerId: owner });
-            if (ownerRef.current !== owner) return;
+            if (ownerRef.current !== owner || revision !== securityRevision.current) return;
             setFolders(previous => [...previous.filter(f => f.id !== newFolder.id), newFolder]);
             setHierarchyStatus('pending');
             void handleSyncFolders(true);
@@ -324,10 +363,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             variant: 'danger'
         })) return;
 
+        const revision = securityRevision.current;
         const finish = beginEdit();
         try {
             await invoke('cmd_delete_folder', { folderId, ownerId: owner });
-            if (ownerRef.current !== owner) return;
+            if (ownerRef.current !== owner || revision !== securityRevision.current) {
+                void handleSyncFoldersRef.current?.(true);
+                return;
+            }
             setFolders(previous => previous.filter(f => f.id !== folderId));
             if (store) {
                 void handleSyncFolders(true);
@@ -335,6 +378,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             if (activeFolderId === folderId) setActiveFolderId(null);
             toast.success(`Folder "${folderName}" deleted.`);
         } catch (e: unknown) {
+            if (ownerRef.current !== owner || revision !== securityRevision.current) return;
             const errStr = String(e);
             if (errStr.includes("not found")) {
                 if (await confirm({
@@ -343,13 +387,9 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                     confirmText: "Remove",
                     variant: 'info'
                 })) {
-                    if (ownerRef.current !== owner) return;
-                    const updated = folders.filter(f => f.id !== folderId);
-                    setFolders(updated);
-                    if (store) {
-                        await store.set('folders', updated);
-                        await store.save();
-                    }
+                    if (ownerRef.current !== owner || revision !== securityRevision.current) return;
+                    setFolders(previous => previous.filter(f => f.id !== folderId));
+                    // Never persist a session's decrypted folder projection.
                     if (activeFolderId === folderId) setActiveFolderId(null);
                 }
             } else {
@@ -363,16 +403,42 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!newName || newName === oldName) return;
         const owner = accountId;
         if (!owner) return;
+        const revision = securityRevision.current;
 
         const finish = beginEdit();
         try {
             await invoke('cmd_rename_folder', { folderId, newName, ownerId: owner });
-            if (ownerRef.current !== owner) return;
+            if (ownerRef.current !== owner || revision !== securityRevision.current) return;
             setFolders(previous => previous.map(f => f.id === folderId ? { ...f, name: newName } : f));
-            toast.success(`Folder renamed to "${newName}".`);
+            toast.success(t('folder_encryption.renamed'));
         } catch (e) {
             toast.error(userFacingError(e, t));
         } finally { finish(); }
+    };
+
+    const handleEncryptFolderName = async (folderId: number) => {
+        const owner = accountId;
+        if (!owner || !await confirm({ title: t('folder_encryption.action'), message: t('folder_encryption.confirm'), confirmText: t('folder_encryption.action'), variant: 'info' })) return;
+        if (ownerRef.current !== owner) return;
+        const revision = securityRevision.current;
+        const finish = beginEdit();
+        pendingEncryption.current.add(folderId);
+        try {
+            const list = await invoke<TelegramFolder[]>('cmd_encrypt_folder_name', { ownerId: owner, folderId });
+            if (ownerRef.current !== owner || revision !== securityRevision.current) return;
+            setFolders(list);
+            clearImageMemoryCaches();
+            await queryClient.invalidateQueries({ queryKey: ['files'] });
+            toast.success(t('folder_encryption.success'));
+        } catch (error) {
+            if (ownerRef.current === owner) toast.error(userFacingError(error, t));
+        } finally {
+            pendingEncryption.current.delete(folderId);
+            finish();
+            // A lock may have overtaken the command's IPC response. Re-read
+            // ciphertext-backed state, never publish that stale plaintext reply.
+            void handleSyncFoldersRef.current?.(true);
+        }
     };
 
     const handleFolderToggleVisibility = async (folderId: number, makePublic: boolean, desiredUsername?: string) => {
@@ -411,6 +477,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         try {
             const info = await invoke<FolderInviteInfo>('cmd_export_folder_invite', {
                 folderId,
+                ownerId: accountId,
             });
             return info;
         } catch (e) {
@@ -420,6 +487,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     };
 
     const handleSetActiveFolderId = async (id: number | null) => {
+        if (id !== null && folders.find(f => f.id === id)?.is_locked) {
+            toast.info(t('folder_encryption.open_locked'));
+            return;
+        }
         setActiveFolderId(id);
         if (store) {
             await store.set(`activeFolderId:${accountId}`, id);
@@ -486,10 +557,11 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const handleMoveFolder = async (folderId: number, parentId: number | null, displayOrder = 0) => {
         if (!accountId) throw new Error(t('hierarchy.account_required'));
         const owner = accountId;
+        const revision = securityRevision.current;
         const finish = beginEdit();
         try {
             const snapshot = await invoke<HierarchySnapshot>('cmd_move_folder', { ownerId: owner, folderId, parentId, displayOrder });
-            if (ownerRef.current !== owner) return;
+            if (ownerRef.current !== owner || revision !== securityRevision.current) return;
             setFolders(snapshot.folders);
             setHierarchyStatus(isConnected ? 'pending' : 'offline');
         } finally { finish(); }
@@ -540,6 +612,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         handleCreateFolder,
         handleFolderDelete,
         handleFolderRename,
+        handleEncryptFolderName,
         handleFolderToggleVisibility,
         handleExportFolderInvite,
         // Group Actions

@@ -105,6 +105,7 @@ pub mod file_inventory;
 pub mod fmp4_remux;
 pub mod folder_hierarchy;
 pub mod folder_layout;
+pub mod folder_names;
 pub mod jni_cache;
 mod local_cors;
 pub(crate) mod local_search;
@@ -1257,6 +1258,7 @@ pub(crate) fn invoke_handler(
         folder_hierarchy::cmd_sync_folder_hierarchy,
         commands::cmd_delete_folder,
         commands::cmd_rename_folder,
+        folder_names::cmd_encrypt_folder_name,
         commands::cmd_rename_file,
         commands::cmd_save_text_file,
         commands::cmd_get_bandwidth,
