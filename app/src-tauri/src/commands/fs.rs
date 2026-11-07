@@ -2869,6 +2869,9 @@ async fn cmd_upload_file_inner(
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() {
+        if crate::file_creation::is_creation() {
+            return Err("Client not connected".into());
+        }
         log::info!("[MOCK] Uploaded file {} to {:?}", path, folder_id);
         return Ok("Mock upload successful".to_string());
     }
@@ -2985,6 +2988,8 @@ async fn cmd_upload_file_inner(
         let mut last_err = String::new();
         for attempt in 0..=max_retries {
             transfer_account.validate()?;
+            crate::file_creation::begin_publication(&app_handle, folder_id, &file_name, || Ok(()))
+                .await?;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             let publication = if let Some(video) = video_metadata.as_ref() {
                 crate::desktop_video_upload::publish(
@@ -3014,6 +3019,10 @@ async fn cmd_upload_file_inner(
                 .map_err(map_error);
             match publication {
                 Ok(sent) => {
+                    if crate::file_creation::is_creation() {
+                        upload_reservation.commit();
+                    }
+                    crate::file_creation::finish_publication(sent.id())?;
                     crate::file_inventory::changed(&transfer_account, folder_id, &[])?;
                     upload_reservation.commit();
                     if let Some(resumable) = &resumable {
@@ -3038,6 +3047,9 @@ async fn cmd_upload_file_inner(
                 }
                 Err(e) => {
                     let err = e;
+                    if crate::file_creation::is_creation() {
+                        return Err("[CREATE_REVIEW_REQUIRED] Telegram publication is uncertain; review the destination. Automatic resend is disabled.".into());
+                    }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if err == "Transfer cancelled"
                         || err.starts_with("ACCOUNT_CHANGED")
@@ -3215,6 +3227,9 @@ async fn cmd_upload_file_encrypted(
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() {
+        if crate::file_creation::is_creation() {
+            return Err("Client not connected".into());
+        }
         log::info!("[MOCK] Uploaded encrypted file {} to {:?}", path, folder_id);
         return Ok("Mock encrypted upload successful".to_string());
     }
@@ -3355,8 +3370,33 @@ async fn cmd_upload_file_encrypted(
         let mut last_err = String::new();
         for attempt in 0..=max_retries {
             transfer_account.validate()?;
+            crate::file_creation::begin_publication(
+                &app_handle,
+                folder_id,
+                source_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .as_ref(),
+                || {
+                    if let Some(session) = vault_session {
+                        crypto_state
+                            .with_current_session(session, || ())
+                            .map_err(|_| {
+                                "[VAULT_LOCKED] Upload credential changed before publication"
+                                    .to_string()
+                            })?;
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
             match client.send_message(&peer, message.clone()).await {
                 Ok(_sent) => {
+                    if crate::file_creation::is_creation() {
+                        bandwidth_reservation.commit();
+                    }
+                    crate::file_creation::finish_publication(_sent.id())?;
                     crate::file_inventory::changed(&transfer_account, folder_id, &[])?;
                     bandwidth_reservation.commit();
                     if let Some(resumable) = &resumable {
@@ -3418,6 +3458,9 @@ async fn cmd_upload_file_encrypted(
                 }
                 Err(e) => {
                     let err = map_error(e);
+                    if crate::file_creation::is_creation() {
+                        return Err("[CREATE_REVIEW_REQUIRED] Telegram publication is uncertain; review the destination. Automatic resend is disabled.".into());
+                    }
                     log::warn!(
                         "send_message attempt {}/{}: {}",
                         attempt + 1,
@@ -4006,6 +4049,7 @@ pub async fn cmd_save_text_file(
     if content.len() > MAX_EDITABLE_TEXT_BYTES {
         return Err("[TEXT_TOO_LARGE] This text file is too large to edit in the app".into());
     }
+    crate::file_creation::validate_text(&content)?;
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let client = state
         .client
@@ -5412,7 +5456,67 @@ async fn publish_folder_chunk(
     })
 }
 
+/// Collision preflight without registering/cancelling a UI folder scan.
+pub(crate) async fn check_creation_destination(
+    app: &tauri::AppHandle,
+    account: &crate::workspace::AccountGuard,
+    folder: Option<i64>,
+    name: &str,
+) -> Result<(), String> {
+    let state = app.state::<TelegramState>();
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    crate::folder_names::ensure_readable(account, &crypto, folder)?;
+    let db = app.state::<DbConnection>().inner().clone();
+    let captured = account.clone();
+    crate::db::with_connection(db, move |conn| {
+        crate::folder_hierarchy::transaction(conn, &captured, || {
+            crate::folder_hierarchy::check_parent(conn, 0, folder)
+        })
+    })
+    .await?;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let credential = crypto.current_credential().ok();
+    let listing =
+        crate::file_inventory::messages_refresh(account, state.inner(), folder, true).await?;
+    if !listing.complete {
+        return Err(
+            "[CREATE_INVENTORY_INCOMPLETE] Refresh the complete destination before creating files"
+                .into(),
+        );
+    }
+    let mut reader = InventoryMetadataReader::new(
+        app,
+        account,
+        &client,
+        folder,
+        credential.as_ref().map(|(_, key)| key),
+    );
+    reader.require_known_names = true;
+    for message in listing.rows.iter() {
+        if let Some(file) = reader.read(message, (false, false)).await? {
+            if file.name.to_lowercase() == name.to_lowercase() {
+                return Err("[FILE_EXISTS] A file with this name already exists".into());
+            }
+        }
+    }
+    listing.ticket.validate(account)?;
+    if let Some((session, _)) = credential {
+        crypto
+            .with_current_session(session, || Ok::<(), String>(()))
+            .map_err(|_| "[VAULT_LOCKED] Reload the destination".to_string())??;
+    }
+    crate::folder_names::ensure_readable(account, &crypto, folder)?;
+    account.validate()
+}
+
 pub(crate) struct InventoryMetadataReader<'a> {
+    require_known_names: bool,
     app: &'a tauri::AppHandle,
     pub account: &'a crate::workspace::AccountGuard,
     pub client: &'a grammers_client::Client,
@@ -5430,6 +5534,7 @@ impl<'a> InventoryMetadataReader<'a> {
         vault_key: Option<&'a SecretKey>,
     ) -> Self {
         Self {
+            require_known_names: false,
             app,
             account,
             client,
@@ -5524,8 +5629,14 @@ impl<'a> InventoryMetadataReader<'a> {
                     }
                     _ => {
                         workspace_account.validate()?;
+                        if self.require_known_names {
+                            return Err("[CREATE_NAMES_LOCKED] Destination names are unavailable; unlock protected metadata and refresh".into());
+                        }
                     }
                 }
+            }
+            if self.require_known_names && protected && vault_key.is_none() {
+                return Err("[CREATE_NAMES_LOCKED] Unlock protected metadata before checking destination names".into());
             }
             let ext = std::path::Path::new(&name)
                 .extension()
@@ -5648,6 +5759,7 @@ impl<'a> InventoryMetadataReader<'a> {
                     size = plaintext_size;
                 }
                 if info.metadata_protected {
+                    let mut name_decoded = false;
                     name = "Encrypted file".to_string();
                     mime = Some("application/octet-stream".to_string());
                     ext = None;
@@ -5662,6 +5774,7 @@ impl<'a> InventoryMetadataReader<'a> {
                                     && !metadata.original_name.is_empty()
                                 {
                                     name = metadata.original_name;
+                                    name_decoded = true;
                                     mime = Some(metadata.mime_type);
                                     ext = std::path::Path::new(&name)
                                         .extension()
@@ -5671,10 +5784,19 @@ impl<'a> InventoryMetadataReader<'a> {
                             }
                         }
                     }
+                    if self.require_known_names && !name_decoded {
+                        return Err("[CREATE_NAMES_LOCKED] Unlock protected metadata before checking destination names".into());
+                    }
                 } else if !info.remote_name.is_empty() && name == "TDENC2" {
                     name = info.remote_name.clone();
                 }
             } else if suspected_tdenc2 {
+                if self.require_known_names {
+                    return Err(
+                        "[CREATE_NAMES_LOCKED] Protected destination names could not be verified"
+                            .into(),
+                    );
+                }
                 name = "Encrypted file".to_string();
                 mime = Some("application/octet-stream".to_string());
                 ext = None;

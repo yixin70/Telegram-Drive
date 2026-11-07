@@ -179,7 +179,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
     }, [file.id, activeFolderId, localPath, file.encryption_state, reload, textCommand, ownerId, markdown]);
 
     const handleSave = useCallback(async () => {
-        if (!dirty || pending.current || loading || error || readOnlyReason) return;
+        if (!dirty || pending.current || loading || error || readOnlyReason || content.length === 0) return;
         pending.current = true;
         const current = epoch.current;
         setSaving(true);
@@ -317,7 +317,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                         </button>
                         <button
                             onClick={(e) => { e.stopPropagation(); void handleSave(); }}
-                            disabled={!dirty || saving || loading || Boolean(error) || Boolean(readOnlyReason)}
+                            disabled={!dirty || saving || loading || Boolean(error) || Boolean(readOnlyReason) || content.length === 0}
                             className="viewer-control !w-auto gap-1.5 px-2.5 disabled:opacity-40"
                             title={i18n.t('common.save')}
                             aria-label={i18n.t('common.save')}
@@ -367,6 +367,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="viewer-panel mx-auto flex min-h-0 h-full w-full max-w-5xl flex-col overflow-hidden">
+                    {dirty && content.length === 0 && <p id="text-empty-status" role="status" className="px-4 py-2 text-ui text-app-danger">{i18n.t('file_creation.text_empty')}</p>}
                     {markdown && !loading && !error && !readOnlyReason && (
                         <div className="markdown-modes flex shrink-0 gap-2 border-b border-white/10 p-2">
                             <button className="quiet-control rounded-control px-3 py-1.5 text-metadata text-white" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>{i18n.t('viewer.markdown_preview')}</button>
@@ -404,6 +405,7 @@ export function TextViewerModal({ file, onClose, onNext, onPrev, currentIndex, t
                             wrap="off"
                             autoFocus
                             aria-label={file.name}
+                            aria-describedby={dirty && content.length === 0 ? 'text-empty-status' : undefined}
                             className="custom-scrollbar h-full w-full flex-1 resize-none bg-transparent p-4 font-mono text-metadata leading-relaxed text-white outline-none"
                         />
                     )}

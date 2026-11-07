@@ -13,6 +13,21 @@ async function openText(page: Page) {
 
 // The text body comes from the read command as fixture content; the Telegram
 // download and the replacing upload are outside this browser journey.
+test('empty text replacements preserve the draft and original without invoking a mutation', async ({ page }) => {
+  await desktopFixture(page, { textContent: 'keep original', protectedText: true, vaultState: 'unlocked' });
+  const editor = await openText(page);
+  await editor.fill('');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByText('Enter at least one byte of text.', { exact: true })).toBeVisible();
+  expect(await nativeCalls(page, 'cmd_save_text_file')).toHaveLength(0);
+  await expect(editor).toHaveValue('');
+  expect(await page.evaluate(() => (window as any).__desktopTest.textContent)).toBe('keep original');
+  await editor.fill('valid replacement');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_save_text_file')).length).toBe(1);
+});
+
 test('a text file opens in the built-in viewer, is edited and saved', async ({ page }) => {
   await desktopFixture(page, { textContent: 'hello from fixture' });
   await page.goto('/');

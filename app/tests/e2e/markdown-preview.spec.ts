@@ -91,7 +91,7 @@ test('long Markdown scrolls inside the viewer without stretching its controls', 
   await expect(page.getByRole('button', { name: 'Edit Markdown', exact: true })).toBeInViewport();
 });
 
-test('untrusted Markdown never executes HTML, embeds images or resolves unsafe paths', async ({ page }) => {
+test('untrusted Markdown never executes HTML, embeds images or resolves unsafe paths', async ({ page, baseURL }) => {
   const requests: string[] = [];
   page.on('request', request => { if (request.url().includes('markdown-probe.invalid')) requests.push(request.url()); });
   await desktopFixture(page, { textFilename: 'Fixture notes.md', textContent: [
@@ -112,7 +112,7 @@ test('untrusted Markdown never executes HTML, embeds images or resolves unsafe p
   await expect.poll(async () => (await nativeCalls(page, 'plugin:shell|open')).length).toBe(1);
   expect(await page.evaluate(() => (window as any).markdownExecuted)).toBeUndefined();
   expect(requests).toEqual([]);
-  await expect(page).toHaveURL('http://127.0.0.1:4173/');
+  await expect(page).toHaveURL(new URL('/', baseURL!).href);
 });
 
 test('protected Markdown saves with its access scope and disappears on lock', async ({ page }) => {

@@ -360,6 +360,125 @@ impl Drop for Backend {
 }
 
 #[test]
+fn created_file_sources_survive_queue_restart_and_never_resend_an_uncertain_publication() {
+    // Production private files/receipts + SQLite across child processes, not
+    // a live Telegram send or the Tauri scheduler.
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let mut request = json!({"id":"268ea8a4-37c9-4abd-b46e-c0c460d63fb4","ownerId":"101","folderId":null,"filename":"README.MD","content":"","protectionMode":"standard","protectMetadata":false});
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("TEXT_EMPTY"));
+    assert!(!fixture.path("created-files").exists());
+    for name in ["../escape.txt", "a/b.txt", "CON.txt", "bad.", "bad ", "　"] {
+        request["filename"] = json!(name);
+        request["content"] = json!("valid");
+        assert!(app
+            .failure(json!({"command":"creation_stage","request":request}))
+            .contains("FILE_NAME_INVALID"));
+    }
+    request["filename"] = json!("README.MD");
+    request["content"] = json!("é".repeat(524_288) + "x");
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("TEXT_TOO_LARGE"));
+    assert!(!fixture.path("created-files").exists());
+    request["filename"] = json!("README.MD");
+    request["content"] = json!("\u{feff}  日本語\r\n");
+    let staged = app.ok(json!({"command":"creation_stage","request":request}));
+    let path = staged["path"].as_str().unwrap();
+    let source = staged["source"].clone();
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        "\u{feff}  日本語\r\n".as_bytes()
+    );
+    let job = json!({"id":request["id"],"ownerId":"101","direction":"upload","kind":"local_upload","status":"paused","path":path,"filename":"README.MD","folderId":null,"createdSource":source,
+        "progress":0,"transferredBytes":0,"totalBytes":16,"speedBytesPerSec":0,"queuePosition":1,"revision":1,"createdAt":1,"updatedAt":1});
+    app.ok(json!({"command":"save_transfer","job":job}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"creation_sweep"}));
+    assert!(std::path::Path::new(path).exists());
+    assert_eq!(
+        app.ok(json!({"command":"transfers"}))[0]["createdSource"],
+        source
+    );
+    app.ok(json!({"command":"creation_verify","source":source,"path":path}));
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    assert!(app
+        .failure(json!({"command":"creation_verify","source":source,"path":path,"owner":"202"}))
+        .contains("ACCOUNT_CHANGED"));
+    app.ok(json!({"command":"creation_begin","source":source}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert!(app
+        .failure(json!({"command":"creation_verify","source":source,"path":path}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    assert!(app
+        .failure(json!({"command":"creation_begin","source":source}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    app.ok(json!({"command":"creation_finish","source":source,"messageId":881}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.ok(json!({"command":"creation_verify","source":source,"path":path}))["messageId"],
+        881
+    );
+    app.ok(json!({"command":"remove_transfer","id":request["id"]}));
+    app.ok(json!({"command":"creation_sweep"}));
+    assert!(!std::path::Path::new(path).exists());
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    app.stop();
+}
+
+#[test]
+fn created_file_content_and_owned_cleanup_cross_restart_and_protected_envelopes() {
+    // Real owned staging, envelope streams and editor access across processes.
+    // Fixture files replace Telegram; this is not queue/SDK network acceptance.
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
+        let fixture = Fixture::new();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+        let content = "  日本語\r\n";
+        let request = json!({"id":"268ea8a4-37c9-4abd-b46e-c0c460d63fb5","ownerId":"101","folderId":null,"filename":"notes.txt","content":content,"protectionMode":mode,"protectMetadata":true});
+        let staged = app.ok(json!({"command":"creation_stage","request":request}));
+        let path = staged["path"].as_str().unwrap();
+        let source = &staged["source"];
+        assert_eq!(std::fs::read(path).unwrap(), content.as_bytes());
+        fixture.write("unrelated.txt", b"never remove this");
+        assert!(app.failure(json!({"command":"creation_verify","source":source,"path":fixture.path("unrelated.txt")})).contains("Invalid owned creation source"));
+        if mode != "standard" {
+            app.ok(json!({"command":"fixture_encrypt","source":path,"createdSource":source,"destination":"remote.tdenc","text":true,"protectionMode":mode,"filePassphrase":"synthetic file password"}));
+        }
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+        if mode != "standard" {
+            app.ok(json!({"command":"read_envelope","source":"remote.tdenc","destination":"downloaded.txt","filePassphrase":"synthetic file password"}));
+            assert_eq!(fixture.read("downloaded.txt"), content.as_bytes());
+            assert_eq!(app.ok(json!({"command":"text_read","source":"remote.tdenc","filePassphrase":"synthetic file password"}))["content"], content);
+        }
+        std::fs::write(path, b"partial after crash").unwrap();
+        assert!(app
+            .failure(json!({"command":"creation_verify","source":source,"path":path}))
+            .contains("Creation source changed"));
+        app.ok(json!({"command":"creation_sweep"}));
+        assert!(!std::path::Path::new(path).exists());
+        assert_eq!(fixture.read("unrelated.txt"), b"never remove this");
+        assert!(app
+            .failure(json!({"command":"creation_stage","request":request}))
+            .contains("CREATE_REVIEW_REQUIRED"));
+        app.stop();
+    }
+}
+
+#[test]
 fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
     for (mode, name) in [
         ("vault", "private.txt"),
@@ -417,8 +536,16 @@ fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
         if mode == "vault_and_passphrase" {
             app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
         }
-        app.ok(json!({"command":"text_replace","source":"edited.tdenc","destination":"empty.tdenc","content":"","filePassphrase":"synthetic file password"}));
-        assert_eq!(app.ok(json!({"command":"text_read","source":"empty.tdenc","filePassphrase":"synthetic file password"}))["content"], "");
+        assert!(app.failure(json!({"command":"text_replace","source":"edited.tdenc","destination":"empty.tdenc","content":"","filePassphrase":"synthetic file password"})).contains("TEXT_EMPTY"));
+        assert_eq!(fixture.read("edited.tdenc"), edited);
+        assert!(!fixture.path("empty.tdenc").exists());
+        app.ok(json!({"command":"text_replace","source":"edited.tdenc","destination":"valid.tdenc","content":"valid after refusal","filePassphrase":"synthetic file password"}));
+        assert_eq!(app.ok(json!({"command":"text_read","source":"valid.tdenc","filePassphrase":"synthetic file password"}))["content"], "valid after refusal");
+        // Old protected empty envelopes remain readable (mutation policy is not a format change).
+        fixture.write("legacy.txt", b"");
+        app.ok(json!({"command":"fixture_encrypt","source":"legacy.txt","destination":"legacy.tdenc","text":true,
+            "protectionMode":mode,"filePassphrase":"synthetic file password"}));
+        assert_eq!(app.ok(json!({"command":"text_read","source":"legacy.tdenc","filePassphrase":"synthetic file password"}))["content"], "");
         app.stop();
     }
 }

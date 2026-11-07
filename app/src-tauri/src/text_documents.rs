@@ -170,6 +170,7 @@ impl Access {
     pub async fn replace(&self, remote: &impl Remote, content: String) -> Result<i32> {
         use tokio::io::AsyncReadExt;
         let content = Zeroizing::new(content);
+        crate::file_creation::validate_text(&content)?;
         if content.len() > MAX_BYTES {
             return Err("[TEXT_TOO_LARGE] Text exceeds 1 MiB".into());
         }

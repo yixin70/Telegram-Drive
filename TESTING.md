@@ -2,6 +2,99 @@
 
 Current application target: **Windows only**. Android builds, mobile UI and mobile-only journeys are retired. Android publication checks remain as repository-history protections, not Android support. Historical device/platform observations below are not current support promises.
 
+## New File in Cloud
+
+From `app/`, run:
+
+```sh
+npx playwright test tests/e2e/file-creation.spec.ts tests/e2e/text-preview.spec.ts tests/e2e/upload-protection.spec.ts tests/e2e/folder-hierarchy.spec.ts --workers=1
+```
+
+The real desktop components/providers exercise exact filenames and UTF-8 text,
+required nonempty content, byte limits, multiline/keyboard/focus behavior,
+protection cancellation, account withdrawal, delayed and lost admission replies,
+and confirmed-publication refresh/opening. The IPC and publication events are
+controlled fixtures, not evidence of native queue execution or Telegram delivery.
+For concurrent checkouts, set `PLAYWRIGHT_PORT` to a free port (PowerShell:
+`$env:PLAYWRIGHT_PORT = '4279'`). An explicit port starts a checkout-owned strict-port
+server instead of reusing another checkout's development server.
+
+From the repository root:
+
+```sh
+cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e created_file_ -- --test-threads=1
+cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e protected_text_ -- --test-threads=1
+```
+
+These journeys use synthetic accounts, real private staging files, SQLite, process
+restart, owned-source checks/cleanup, durable publication latches and production
+protected-envelope/editor services. Empty mutation refusal preserves the original;
+legacy protected empty documents remain readable. The driver does **not** run the
+Tauri transfer scheduler, creation collision scans against Telegram, small-file SDK
+uploads, or real encrypted-download publication. Where a source/envelope is read
+from a fixture file, it is not a live upload/download/listing claim.
+
+Creation requires a connected, complete destination inventory with verifiable
+names. Same-folder case-insensitive collisions are refused locally and checked
+again before sending; Telegram has no atomic cross-client filename constraint.
+Queued sources remain as private **plaintext** app-data files while needed for
+pause/retry/restart (not encrypted-at-rest staging). Failed/cancelled jobs retain
+them until retried or explicitly cleared; completed jobs and unqueued crash
+orphans are cleaned. Small receipts remain to prevent request-ID resurrection.
+An interrupted send with no confirmed publication receipt is review-required and
+will not resend automatically or on Retry. Review Transfers and the destination
+before creating a new request; clearing the queue does not prove remote absence.
+
+Installed Windows/owner-authorized test-account acceptance remains required:
+all four protection modes, exact nonempty create/upload/list/download/reopen,
+empty create/save refusal, locked metadata, duplicates and concurrent admissions,
+offline/quota waits, cancellation around sending, persistence/lost replies,
+restart/account switching, and protected recovery. Do not use personal Cloud data
+for unattended probes. Plain text named `.docx` is not a Word document.
+
+Implementation verification (2026-11-07): 23 browser creation/protection/text/hierarchy
+journeys and 7 existing browser transfer journeys passed on an isolated port.
+The current-source native `created_file_` (2) and `protected_text_` (4) journeys
+passed using a separately linked driver/test harness with Windows common-controls
+v6 activation; no running driver's executable was replaced. Frontend build/bundle
+budgets, localization, Clippy, Rust formatting, test-policy and app-security checks
+passed.
+
+The full native suite was then rebuilt and rerun against the latest source on
+2026-11-07 using Cargo's driver (no `NATIVE_E2E_DRIVER` override): **247 passed,
+0 failed, 0 ignored, 0 filtered out**. Test execution took 1872.72 seconds
+(31 minutes 12.72 seconds), following a 52.64-second build. This includes both
+`created_file_` journeys and the previously failing whitespace-only filename
+regression. The earlier 245/246 result came from an older build and is superseded
+by this run.
+
+Exact command (repository root; separate build directory avoids other checkouts):
+
+```sh
+cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e --target-dir C:/Users/yixin/AppData/Local/Temp/opencode/cloud-file-target --config 'profile.dev.package.app.debug=0' -j1 -- --test-threads=1
+```
+
+The app-only debug-information override and single build worker avoided the
+earlier compiler memory exhaustion; no tests were skipped. The controlled IPC
+readiness-failure journey intentionally logged a child panic and passed its cleanup
+assertions; WebView class-unregistration diagnostics did not fail the suite.
+These results establish the exercised native boundaries, not live Telegram or
+installed-app acceptance. Live Telegram and installed Windows acceptance above
+have **not** been run.
+
+PR integration verification (2026-11-07): after merging current `main`'s Markdown
+and encrypted-folder-name changes, the same full native command rebuilt Cargo's
+driver and passed **250/250 tests**, with **0 failed, ignored or filtered out**.
+Test execution took 2012.15 seconds (33 minutes 32.15 seconds), following a
+3-minute 59-second build. This integrated-source result supersedes the earlier
+247-test run. All **47 browser journeys** across file creation, text/Markdown,
+folder encryption/hierarchy, upload protection and transfer cleanup/speeds passed
+on isolated port 4279 (one worker, 2.5 minutes). The Markdown navigation assertion
+uses Playwright's configured base URL rather than assuming the default port.
+Integrated-source frontend build/bundle budgets, localization, Clippy with
+`-D warnings`, Rust formatting, app-security and test-policy checks also passed.
+No installed Windows or live Telegram acceptance is implied.
+
 ## Encrypted folder names
 
 From `app/`, run `npx playwright test tests/e2e/folder-encryption.spec.ts tests/e2e/folder-hierarchy.spec.ts --workers=1`.

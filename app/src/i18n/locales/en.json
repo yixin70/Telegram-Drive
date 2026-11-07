@@ -1,4 +1,17 @@
 {
+  "file_creation": {
+    "file_exists": "This filename already exists or is queued. Choose another name.",
+    "destination_unavailable": "Destination names could not be verified. Connect, unlock protected metadata and refresh the folder.",
+    "failed": "File creation could not be confirmed. Check Transfers and the destination before trying again.",
+    "title": "New File", "filename": "Full filename", "content": "Initial text", "create": "Create",
+    "text_empty": "Enter at least one byte of text.", "invalid_name": "Use a safe filename of at most 120 characters, without reserved names, separators or trailing dots/spaces.",
+    "name_help": "Include any extension you want, or no extension. The name is preserved exactly.",
+    "format_help": "Creates UTF-8 text (up to 1 MiB), not a Word document or other binary format. Enter adds a line; Ctrl+Enter creates. No hidden content is added.",
+    "bytes_one": "{{count}} UTF-8 byte", "bytes_other": "{{count}} UTF-8 bytes",
+    "choose_destination": "Open a folder or Saved Messages to create a file.", "queued": "File creation queued. It appears after Telegram confirms the upload.",
+    "filtered": "File created. Clear filters or refresh this folder to find it.",
+    "check_request": "Check original request", "review_request": "Admission is uncertain. Keep this request unchanged and check it again, or review Transfers and the destination before creating another file."
+  },
   "folder_encryption": {
     "unlock_required": "Unlock the vault to encrypt this folder name.",
     "private_required": "Make this folder private before encrypting its name.",

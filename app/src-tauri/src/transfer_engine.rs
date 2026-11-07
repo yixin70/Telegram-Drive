@@ -169,6 +169,8 @@ pub struct TransferJob {
     #[serde(default)]
     pub video_filename_caption: Option<bool>,
     pub temp_zip_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) created_source: Option<crate::file_creation::CreatedSource>,
     pub progress: u8,
     pub transferred_bytes: u64,
     pub total_bytes: u64,
@@ -220,6 +222,8 @@ pub struct TransferEnqueueRequest {
     #[serde(default)]
     pub video_filename_caption: Option<bool>,
     pub temp_zip_path: Option<String>,
+    #[serde(skip)]
+    pub(crate) created_source: Option<crate::file_creation::CreatedSource>,
     pub total_bytes: Option<u64>,
     pub initial_status: Option<TransferStatus>,
     /// Internal callers only; never read from a request made by the interface.
@@ -588,6 +592,7 @@ pub struct TransferEngine {
     startup_jobs: Mutex<Option<Vec<TransferJob>>>,
     active: AsyncMutex<HashMap<String, TransferDirection>>,
     mutation_lock: AsyncMutex<()>,
+    creation_lock: AsyncMutex<()>,
     pending_commits: AsyncMutex<HashMap<String, TransferJob>>,
     prompt_tokens: AsyncMutex<HashMap<String, u64>>,
     /// When each running job's progress was last written to disk.
@@ -621,6 +626,7 @@ impl TransferEngine {
             startup_jobs: Mutex::new(Some(startup_jobs)),
             active: AsyncMutex::new(HashMap::new()),
             mutation_lock: AsyncMutex::new(()),
+            creation_lock: AsyncMutex::new(()),
             pending_commits: AsyncMutex::new(HashMap::new()),
             prompt_tokens: AsyncMutex::new(HashMap::new()),
             progress_checkpoints: AsyncMutex::new(HashMap::new()),
@@ -636,9 +642,20 @@ impl TransferEngine {
         self.install_progress_listeners();
         let engine = self.clone();
         tauri::async_runtime::spawn(async move {
+            let mut swept_owners = std::collections::HashSet::new();
             loop {
                 if engine.shutting_down.load(Ordering::Acquire) {
                     break;
+                }
+                if let Ok(account) = engine.account(None) {
+                    if swept_owners.insert(account.owner) {
+                        let _creation = engine.creation_lock.lock().await;
+                        let _mutation = engine.mutation_lock.lock().await;
+                        let jobs: Vec<_> = engine.jobs.read().await.values().cloned().collect();
+                        if let Err(error) = crate::file_creation::sweep_orphans(&account, &jobs) {
+                            log::warn!("Owned creation cleanup deferred: {error}");
+                        }
+                    }
                 }
                 engine.schedule_once().await;
                 tokio::select! {
@@ -952,7 +969,7 @@ impl TransferEngine {
                 drop(jobs);
                 self.emit_job(&job);
                 if job.status == TransferStatus::Completed {
-                    self.cleanup_temporary_source(&job).await;
+                    self.cleanup_temporary_source(&job, false).await;
                 }
             }
         }
@@ -1060,71 +1077,98 @@ impl TransferEngine {
             .as_deref()
             .ok_or_else(|| "ACCOUNT_REQUIRED: Review this legacy transfer first".to_string())
             .and_then(|owner| self.account(Some(owner)));
-        let result = match account {
-            Err(error) => Err(error),
-            Ok(_) => match job.kind {
-                TransferKind::LocalUpload => {
-                    commands::fs::upload_local_file(
-                        job.path.clone().unwrap_or_default(),
-                        job.folder_id,
-                        Some(job.id.clone()),
-                        job.protection_mode.clone(),
-                        prompt_token,
-                        job.protect_metadata,
-                        job.video_upload_mode.clone(),
-                        job.video_filename_caption,
-                        job.sync_path.clone(),
-                        self.app.clone(),
-                        self.app.state::<TelegramState>(),
-                        self.app.state::<Arc<BandwidthManager>>(),
-                        self.app.state::<Arc<NetworkConfig>>(),
-                        self.app.state::<CryptoState>(),
-                        self.app.state::<DbConnection>(),
-                        job.owner_id.clone(),
-                    )
-                    .await
-                }
-                TransferKind::UrlUpload => {
-                    commands::cmd_upload_from_url(
-                        job.url.clone().unwrap_or_default(),
-                        job.folder_id,
-                        job.id.clone(),
-                        job.protection_mode.clone(),
-                        prompt_token,
-                        job.protect_metadata,
-                        job.video_upload_mode.clone(),
-                        job.video_filename_caption,
-                        self.app.clone(),
-                        self.app.state::<TelegramState>(),
-                        self.app.state::<Arc<BandwidthManager>>(),
-                        self.app.state::<Arc<NetworkConfig>>(),
-                        self.app.state::<CryptoState>(),
-                        self.app.state::<DbConnection>(),
-                        job.owner_id.clone(),
-                    )
-                    .await
-                }
-                TransferKind::Download => {
-                    commands::cmd_download_file(
-                        DownloadFileRequest {
-                            owner_id: job.owner_id.clone(),
-                            message_id: job.message_id.unwrap_or_default(),
-                            save_path: job.save_path.clone().unwrap_or_default(),
-                            folder_id: job.folder_id,
-                            transfer_id: Some(job.id.clone()),
+        let operation = async {
+            match account.clone() {
+                Err(error) => Err(error),
+                Ok(_) => match job.kind {
+                    TransferKind::LocalUpload => {
+                        commands::fs::upload_local_file(
+                            job.path.clone().unwrap_or_default(),
+                            job.folder_id,
+                            Some(job.id.clone()),
+                            job.protection_mode.clone(),
                             prompt_token,
-                            collision_policy: job.collision_policy,
-                        },
-                        self.app.clone(),
-                        self.app.state::<TelegramState>(),
-                        self.app.state::<Arc<BandwidthManager>>(),
-                        self.app.state::<Arc<NetworkConfig>>(),
-                        self.app.state::<CryptoState>(),
-                        self.app.state::<DbConnection>(),
-                    )
-                    .await
-                }
-            },
+                            job.protect_metadata,
+                            job.video_upload_mode.clone(),
+                            job.video_filename_caption,
+                            job.sync_path.clone(),
+                            self.app.clone(),
+                            self.app.state::<TelegramState>(),
+                            self.app.state::<Arc<BandwidthManager>>(),
+                            self.app.state::<Arc<NetworkConfig>>(),
+                            self.app.state::<CryptoState>(),
+                            self.app.state::<DbConnection>(),
+                            job.owner_id.clone(),
+                        )
+                        .await
+                    }
+                    TransferKind::UrlUpload => {
+                        commands::cmd_upload_from_url(
+                            job.url.clone().unwrap_or_default(),
+                            job.folder_id,
+                            job.id.clone(),
+                            job.protection_mode.clone(),
+                            prompt_token,
+                            job.protect_metadata,
+                            job.video_upload_mode.clone(),
+                            job.video_filename_caption,
+                            self.app.clone(),
+                            self.app.state::<TelegramState>(),
+                            self.app.state::<Arc<BandwidthManager>>(),
+                            self.app.state::<Arc<NetworkConfig>>(),
+                            self.app.state::<CryptoState>(),
+                            self.app.state::<DbConnection>(),
+                            job.owner_id.clone(),
+                        )
+                        .await
+                    }
+                    TransferKind::Download => {
+                        commands::cmd_download_file(
+                            DownloadFileRequest {
+                                owner_id: job.owner_id.clone(),
+                                message_id: job.message_id.unwrap_or_default(),
+                                save_path: job.save_path.clone().unwrap_or_default(),
+                                folder_id: job.folder_id,
+                                transfer_id: Some(job.id.clone()),
+                                prompt_token,
+                                collision_policy: job.collision_policy,
+                            },
+                            self.app.clone(),
+                            self.app.state::<TelegramState>(),
+                            self.app.state::<Arc<BandwidthManager>>(),
+                            self.app.state::<Arc<NetworkConfig>>(),
+                            self.app.state::<CryptoState>(),
+                            self.app.state::<DbConnection>(),
+                        )
+                        .await
+                    }
+                },
+            }
+        };
+        let result = if let Some(source) = job.created_source.as_ref() {
+            match account.clone() {
+                Err(error) => Err(error),
+                Ok(account) => match crate::file_creation::publication_result(&account, source) {
+                    Ok(Some(message)) => {
+                        let _ = crate::file_inventory::changed(&account, job.folder_id, &[]);
+                        Ok(message.to_string())
+                    }
+                    Err(error) => Err(error),
+                    Ok(None) => match crate::file_creation::verify(
+                        &account,
+                        source,
+                        job.path.as_deref().unwrap_or_default(),
+                    ) {
+                        Err(error) => Err(error),
+                        Ok(()) => {
+                            crate::file_creation::with_source(account, source.clone(), operation)
+                                .await
+                        }
+                    },
+                },
+            }
+        } else {
+            operation.await
         };
 
         let _mutation = self.mutation_lock.lock().await;
@@ -1175,7 +1219,7 @@ impl TransferEngine {
         };
         self.emit_job(&updated);
         if !updated.persistence_pending && updated.status == TransferStatus::Completed {
-            self.cleanup_temporary_source(&updated).await;
+            self.cleanup_temporary_source(&updated, false).await;
         }
         self.notify.notify_one();
     }
@@ -1186,6 +1230,83 @@ impl TransferEngine {
                 self.emit_job(&job);
             }
             Err(error) => log::error!("Could not persist transfer {}: {}", job.id, error),
+        }
+    }
+
+    pub(crate) async fn create_file(
+        &self,
+        request: crate::file_creation::CreateFileRequest,
+    ) -> Result<TransferJob, String> {
+        let source = request.validate()?;
+        let _creation = self.creation_lock.lock().await;
+        let account = self.account(Some(&request.owner_id))?;
+        {
+            let jobs = self.jobs.read().await;
+            if let Some(existing) = jobs.get(&request.id) {
+                if existing.owner_id.as_deref() != Some(&request.owner_id)
+                    || existing
+                        .created_source
+                        .as_ref()
+                        .is_none_or(|old| old.fingerprint != source.fingerprint)
+                {
+                    return Err(
+                        "Creation request ID was reused with different content or scope".into(),
+                    );
+                }
+                return Ok(existing.clone());
+            }
+            if jobs.values().any(|job| {
+                job.owner_id.as_deref() == Some(&request.owner_id)
+                    && job.direction == TransferDirection::Upload
+                    && job.folder_id == request.folder_id
+                    && !matches!(
+                        job.status,
+                        TransferStatus::Completed | TransferStatus::Cancelled
+                    )
+                    && job.filename.to_lowercase() == request.filename.to_lowercase()
+            }) {
+                return Err("[FILE_EXISTS] This filename is already queued".into());
+            }
+        }
+        commands::fs::check_creation_destination(
+            &self.app,
+            &account,
+            request.folder_id,
+            &request.filename,
+        )
+        .await?;
+        let path = crate::file_creation::stage(&account, &request, &source)?;
+        let enqueue = TransferEnqueueRequest {
+            id: request.id,
+            owner_id: Some(request.owner_id),
+            direction: TransferDirection::Upload,
+            kind: TransferKind::LocalUpload,
+            path: Some(path.to_string_lossy().into_owned()),
+            url: None,
+            folder_id: request.folder_id,
+            message_id: None,
+            filename: request.filename,
+            save_path: None,
+            collision_policy: Default::default(),
+            protection_mode: Some(request.protection_mode),
+            prompt_token: request.prompt_token,
+            protect_metadata: Some(request.protect_metadata),
+            video_upload_mode: Some("file".into()),
+            video_filename_caption: Some(false),
+            temp_zip_path: None,
+            created_source: Some(source.clone()),
+            total_bytes: Some(request.content.len() as u64),
+            initial_status: None,
+            origin: None,
+            sync_path: None,
+        };
+        match self.enqueue_many(vec![enqueue]).await {
+            Ok(mut jobs) => Ok(jobs.remove(0)),
+            Err(error) => {
+                // A persistence task can fail after SQLite committed. Keep the
+                // owned source until startup reconciles the durable queue.
+                Err(format!("[CREATE_REVIEW_REQUIRED] Queue admission could not be confirmed. Retry this request or review Transfers: {error}"))
+            }
         }
     }
 
@@ -1223,8 +1344,28 @@ impl TransferEngine {
                 if existing.owner_id != request.owner_id {
                     return Err("Transfer ID belongs to a different owner".into());
                 }
+                if request.created_source.is_some()
+                    && existing.created_source != request.created_source
+                {
+                    return Err("Creation request ID was reused".into());
+                }
                 changed.push(existing.clone());
                 continue;
+            }
+            if request.direction == TransferDirection::Upload
+                && jobs.values().chain(changed.iter()).any(|job| {
+                    (request.created_source.is_some() || job.created_source.is_some())
+                        && job.owner_id == request.owner_id
+                        && job.direction == TransferDirection::Upload
+                        && job.folder_id == request.folder_id
+                        && !matches!(
+                            job.status,
+                            TransferStatus::Completed | TransferStatus::Cancelled
+                        )
+                        && job.filename.to_lowercase() == request.filename.to_lowercase()
+                })
+            {
+                return Err("[FILE_EXISTS] This filename is already queued".into());
             }
             created_ids.insert(request.id.clone());
             position = position.saturating_add(1);
@@ -1260,6 +1401,7 @@ impl TransferEngine {
                 video_upload_mode: request.video_upload_mode,
                 video_filename_caption: request.video_filename_caption,
                 temp_zip_path: request.temp_zip_path,
+                created_source: request.created_source,
                 progress: 0,
                 transferred_bytes: 0,
                 total_bytes: request.total_bytes.unwrap_or(0),
@@ -1330,6 +1472,29 @@ impl TransferEngine {
         }
         let should_cancel =
             active && matches!(action, TransferAction::Pause | TransferAction::Cancel);
+        if matches!(action, TransferAction::Retry | TransferAction::Resume) {
+            if let Some(source) = job.created_source.as_ref() {
+                if jobs.values().any(|other| {
+                    other.id != job.id
+                        && other.owner_id == job.owner_id
+                        && other.direction == TransferDirection::Upload
+                        && other.folder_id == job.folder_id
+                        && !matches!(
+                            other.status,
+                            TransferStatus::Completed | TransferStatus::Cancelled
+                        )
+                        && other.filename.to_lowercase() == job.filename.to_lowercase()
+                }) {
+                    return Err("[FILE_EXISTS] This filename is already queued".into());
+                }
+                crate::file_creation::publication_result(&account, source)?;
+                crate::file_creation::verify(
+                    &account,
+                    source,
+                    job.path.as_deref().unwrap_or_default(),
+                )?;
+            }
+        }
         match action {
             TransferAction::Pause if !job.status.is_terminal() => {
                 job.status = TransferStatus::Paused
@@ -1414,11 +1579,13 @@ impl TransferEngine {
         let _mutation = self.mutation_lock.lock().await;
         let account = self.account(expected)?;
         let owner = account.owner.to_string();
+        let active_ids: Vec<_> = self.active.lock().await.keys().cloned().collect();
         let mut jobs = self.jobs.write().await;
         let ids: Vec<_> = jobs
             .values()
             .filter(|job| {
-                job.owner_id.as_deref() == Some(owner.as_str())
+                !active_ids.contains(&job.id)
+                    && job.owner_id.as_deref() == Some(owner.as_str())
                     && !job.persistence_pending
                     && job.direction == direction
                     && (job.status == TransferStatus::Completed
@@ -1433,6 +1600,9 @@ impl TransferEngine {
         account.validate()?;
         self.store.delete_many(&ids).await?;
         for id in &ids {
+            if let Some(job) = jobs.get(id) {
+                self.cleanup_temporary_source(job, true).await;
+            }
             jobs.remove(id);
             self.prompt_tokens.lock().await.remove(id);
             let _ = self.app.emit("transfer-removed", id);
@@ -1493,7 +1663,23 @@ impl TransferEngine {
         Ok(jobs)
     }
 
-    async fn cleanup_temporary_source(&self, job: &TransferJob) {
+    async fn cleanup_temporary_source(&self, job: &TransferJob, discard: bool) {
+        // Cancelled/failed creations retain their source for an explicit retry.
+        // Clear Terminal discards them; persisted success cleans immediately.
+        if let (Some(source), Some(owner), Some(path)) =
+            (&job.created_source, &job.owner_id, &job.path)
+        {
+            if !discard && job.status != TransferStatus::Completed {
+                return;
+            }
+            if let Ok(account) = self.account(Some(owner)) {
+                if let Err(error) = crate::file_creation::cleanup(&account, source, path) {
+                    if std::path::Path::new(path).exists() {
+                        log::warn!("Could not clean owned creation source: {error}");
+                    }
+                }
+            }
+        }
         if let Some(path) = job.temp_zip_path.as_ref() {
             if let Err(error) = commands::cmd_delete_temp_zip(path.clone(), self.app.clone()).await
             {

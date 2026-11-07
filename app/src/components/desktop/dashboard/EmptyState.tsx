@@ -4,9 +4,10 @@ import { Button } from '../../ui';
 
 interface EmptyStateProps {
     onUpload: () => void;
+    onNewFile?: () => void;
 }
 
-export function EmptyState({ onUpload }: EmptyStateProps) {
+export function EmptyState({ onUpload, onNewFile }: EmptyStateProps) {
     const { t } = useTranslation();
 
     return (
@@ -33,6 +34,7 @@ export function EmptyState({ onUpload }: EmptyStateProps) {
             >
                 {t('common.upload_file')}
             </Button>
+            {onNewFile && <Button onClick={onNewFile} className="mt-3">{t('file_creation.title')}</Button>}
 
             <p className="mt-5 text-badge text-app-text-tertiary">
                 Tip: Use <kbd className="rounded-control border border-app-border bg-app-surface-sunken/45 px-1.5 py-0.5 font-mono text-app-text-secondary">Ctrl/Cmd + F</kbd> to search

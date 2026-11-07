@@ -9,6 +9,10 @@ Only English (`en`) and Spanish (`es`) are supported. The other 22 catalogs and 
 These translations and added plural forms require owner-arranged native-language review. Structural, interpolation, browser and layout checks do not establish linguistic quality. No entry below is approved by a native reviewer. At the time of this review the one-time purchase promise, three-device allowance, recovery and offline-grace meaning were required to stay intact; that system has since been removed from this build (see the update note above).
 
 ## Earlier P2 additions
+New File (`file_creation.*`, English/Spanish): filename rules, UTF-8 byte limits,
+format caveat, queue/filtered status and keyboard instructions added. Spanish
+requires owner-arranged native review; automated checks are not linguistic approval.
+
 
 The following ranges were authored in every listed locale: en, ar, bn-BD, de, es, fa-IR, fil-PH, fr, hi, id, it, ja, ko, ms-MY, pl-PL, pt-BR, ru, th-TH, tr, uk-UA, ur-PK, vi, zh-CN, zh-TW.
 

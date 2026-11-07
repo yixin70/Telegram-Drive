@@ -1,4 +1,17 @@
 {
+  "file_creation": {
+    "file_exists": "Este nombre ya existe o está en cola. Elige otro nombre.",
+    "destination_unavailable": "No se pudieron verificar los nombres del destino. Conéctate, desbloquea los metadatos protegidos y actualiza la carpeta.",
+    "failed": "No se pudo confirmar la creación. Revisa Transferencias y el destino antes de volver a intentarlo.",
+    "check_request": "Comprobar solicitud original", "review_request": "No se pudo confirmar la admisión. Conserva esta solicitud sin cambios y compruébala de nuevo, o revisa Transferencias y el destino antes de crear otro archivo.",
+    "title": "Nuevo archivo", "filename": "Nombre completo del archivo", "content": "Texto inicial", "create": "Crear",
+    "text_empty": "Introduce al menos un byte de texto.", "invalid_name": "Usa un nombre seguro de hasta 120 caracteres, sin nombres reservados, separadores ni puntos o espacios finales.",
+    "name_help": "Incluye la extensión que quieras o ninguna. El nombre se conserva exactamente.",
+    "format_help": "Crea texto UTF-8 (hasta 1 MiB), no un documento de Word ni otro formato binario. Intro añade una línea; Ctrl+Intro crea. No se añade contenido oculto.",
+    "bytes_one": "{{count}} byte UTF-8", "bytes_many": "{{count}} bytes UTF-8", "bytes_other": "{{count}} bytes UTF-8",
+    "choose_destination": "Abre una carpeta o Mensajes guardados para crear un archivo.", "queued": "Creación en cola. El archivo aparecerá cuando Telegram confirme la subida.",
+    "filtered": "Archivo creado. Quita los filtros o actualiza esta carpeta para encontrarlo."
+  },
   "folder_encryption": {
     "unlock_required": "Desbloquea la bóveda para cifrar el nombre de esta carpeta.",
     "private_required": "Haz privada esta carpeta antes de cifrar su nombre.",
