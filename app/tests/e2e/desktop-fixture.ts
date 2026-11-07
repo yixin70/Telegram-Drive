@@ -17,6 +17,8 @@ export async function desktopFixture(page: Page, options: {
   streamingPort?: number;
   /** Extra persisted application settings merged over the fixture defaults. */
   settings?: Record<string, unknown>;
+  /** Controlled encrypted-settings download boundary; the real UI applies and persists it. */
+  settingsSyncDownload?: Record<string, unknown>;
   /** Base64 PDF listed as "Fixture report.pdf" and served through the preview command. */
   pdfBase64?: string;
   /** Plain-text body listed as "Fixture notes.txt" and served through the text commands. */
@@ -137,6 +139,7 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'plugin:store|save') { if (state.saveFails) throw new Error('Storage unavailable'); persist(); return; }
           if (command === 'cmd_get_settings_sync_status') return {available:true,updated_at:1_790_000_000,device_id:'other-fixture-device',current_device:false};
           if (command === 'cmd_upload_settings_sync') return {available:true,updated_at:1_790_000_001,device_id:'this-fixture-device',current_device:true};
+          if (command === 'cmd_download_settings_sync') return {settings:options.settingsSyncDownload ?? {},updated_at:1_790_000_000,device_id:'other-fixture-device'};
           if (command === 'cmd_get_startup_health') {if(state.holdStartupHealth)await startupHealthGate;return { ready: true, streaming_port: options.streamingPort ?? 14201, streaming_port_is_fallback: (options.streamingPort ?? 14201) !== 14201 };}
           if (command === 'cmd_auth_qr_login') return 'tg://login?token=browser-fixture-only';
           if (command === 'cmd_auth_qr_poll') return { success: false };

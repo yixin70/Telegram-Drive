@@ -5,7 +5,6 @@ import { SettingsProvider } from '../../context/SettingsContext';
 import { SyncProvider } from '../../context/SyncContext';
 import { ThemeProvider } from '../../context/ThemeContext';
 import { UploadChoiceProvider } from '../../context/UploadChoiceContext';
-import { UpdateProvider } from '../../context/UpdateContext';
 import { EncryptionProvider } from '../../hooks/useEncryption';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -41,7 +40,7 @@ export function AppProviders({ children }: AppProvidersProps) {
               <SyncProvider>
                 <EncryptionProvider>
                   <UploadChoiceProvider>
-                    <UpdateProvider>{children}</UpdateProvider>
+                    {children}
                   </UploadChoiceProvider>
                 </EncryptionProvider>
               </SyncProvider>

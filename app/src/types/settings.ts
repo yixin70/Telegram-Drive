@@ -17,6 +17,7 @@ export interface Settings {
   viewMode: 'grid' | 'list';
   fileSortField: 'name' | 'size' | 'date';
   fileSortDirection: 'asc' | 'desc';
+  /** @deprecated Inert legacy setting, retained for profile and older-client sync compatibility. */
   autoUpdate: boolean;
   maxConcurrentUploads: number;
   maxConcurrentDownloads: number;

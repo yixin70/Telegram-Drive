@@ -4,7 +4,7 @@ export const DEFAULT_SETTINGS: Settings = {
   viewMode: 'grid',
   fileSortField: 'name',
   fileSortDirection: 'asc',
-  autoUpdate: true,
+  autoUpdate: true, // Inert compatibility default; no updater runtime is registered.
   maxConcurrentUploads: 6,
   maxConcurrentDownloads: 6,
   zipFolders: true,

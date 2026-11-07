@@ -69,6 +69,8 @@ The desktop workspace adds collections, saved searches, a media timeline, Contin
 
 Windows release assets also include updater/signature sidecars where applicable. Download installers only from this repository's GitHub Releases page.
 
+This build does not check for new versions, show update reminders or release-note popups, or offer in-app installation. To upgrade, close the app and run a trusted signed Windows installer manually; keep the existing application profile to preserve settings and sessions. Signing and release assets remain available. Older installed builds retain their original update behavior until replaced.
+
 ## First-time setup
 
 Telegram requires third-party clients to use an application API ID and API hash. Telegram Drive does not provide shared credentials.

@@ -12,8 +12,6 @@
     "os:default",
     "shell:allow-open",
     "store:default",
-    "updater:default",
-    "process:allow-restart",
     "deep-link:default",
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",

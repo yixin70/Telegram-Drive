@@ -24,6 +24,18 @@ export default defineConfig(async () => ({
     // Keep Vite's warning aligned with the reviewed hard failure ceiling in
     // bundle-budget.json. The budget checker still fails the build at 550 kB.
     chunkSizeWarningLimit: 550,
+    rollupOptions: {
+      output: {
+        // Keep the shared UI runtime at its pre-removal eager loading boundary.
+        // Removing UpdateBanner must not move the motion engine into the lazy
+        // dashboard's route budget. Do not raise or bypass the existing budgets.
+        manualChunks(id) {
+          if (/\/node_modules\/(react|react-dom|scheduler|framer-motion|motion-dom|motion-utils)\//.test(id.replace(/\\/g, '/'))) {
+            return 'ui-runtime';
+          }
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
