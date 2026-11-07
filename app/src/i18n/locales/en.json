@@ -1,4 +1,27 @@
 {
+  "file_creation": {
+    "file_exists": "This filename already exists or is queued. Choose another name.",
+    "destination_unavailable": "Destination names could not be verified. Connect, unlock protected metadata and refresh the folder.",
+    "failed": "File creation could not be confirmed. Check Transfers and the destination before trying again.",
+    "title": "New File", "filename": "Full filename", "content": "Initial text", "create": "Create",
+    "text_empty": "Enter at least one byte of text.", "invalid_name": "Use a safe filename of at most 120 characters, without reserved names, separators or trailing dots/spaces.",
+    "name_help": "Include any extension you want, or no extension. The name is preserved exactly.",
+    "format_help": "Creates UTF-8 text (up to 1 MiB), not a Word document or other binary format. Enter adds a line; Ctrl+Enter creates. No hidden content is added.",
+    "bytes_one": "{{count}} UTF-8 byte", "bytes_other": "{{count}} UTF-8 bytes",
+    "choose_destination": "Open a folder or Saved Messages to create a file.", "queued": "File creation queued. It appears after Telegram confirms the upload.",
+    "filtered": "File created. Clear filters or refresh this folder to find it.",
+    "check_request": "Check original request", "review_request": "Admission is uncertain. Keep this request unchanged and check it again, or review Transfers and the destination before creating another file."
+  },
+  "folder_encryption": {
+    "unlock_required": "Unlock the vault to encrypt this folder name.",
+    "private_required": "Make this folder private before encrypting its name.",
+    "mask_pending": "The name is protected locally, but Telegram may still show the original title. Unlock the vault and choose Encrypt folder name again to finish masking it.",
+    "action": "Encrypt folder name",
+    "confirm": "Encrypt this folder name with your unlocked vault? It will appear as Encrypted while locked, and its children and files will be hidden in this app. Telegram will use a generic channel title. Existing file contents and child channel names are not encrypted by this action. Old titles may remain in Telegram history or backups. Keep your vault recovery backup: it is needed to recover the name on another device.",
+    "success": "Folder name encrypted.",
+    "renamed": "Folder renamed.",
+    "open_locked": "Unlock the vault to open this folder."
+  },
   "hierarchy": {
     "incomplete": "Some folders in the synced history are unavailable after scanning Telegram. Available folders and pending edits are preserved; check channel access and retry.",
     "export": "Export layout backup", "import": "Restore layout backup", "exported": "Layout backup saved. Keep it private: it contains channel relationships, not files.", "backup_large": "Backup exceeds 16 MiB.", "import_preview": "Restore placements for {{count}} folders? Matching folders use the backup placement; other folders and newer history are retained. Missing or deleted channels are never recreated. This explicit repair republishes retained metadata to Telegram and syncs with your other devices. Files are not changed.",
@@ -1081,7 +1104,12 @@
     "text_saved": "Saved.",
     "text_save_error": "Could not save. Please try again.",
     "text_discard_confirm": "Discard unsaved changes?",
-    "text_revert": "Revert"
+    "text_revert": "Revert",
+    "markdown_edit": "Edit Markdown",
+    "markdown_preview": "Preview Markdown",
+    "markdown_preview_region": "Markdown preview",
+    "markdown_image": "Image",
+    "markdown_image_blocked": "[Image blocked: {{alt}}]"
   },
   "operations": {
     "delete_file": "Delete File",

@@ -360,16 +360,142 @@ impl Drop for Backend {
 }
 
 #[test]
-fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
-    for mode in ["vault", "passphrase", "vault_and_passphrase"] {
+fn created_file_sources_survive_queue_restart_and_never_resend_an_uncertain_publication() {
+    // Production private files/receipts + SQLite across child processes, not
+    // a live Telegram send or the Tauri scheduler.
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let mut request = json!({"id":"268ea8a4-37c9-4abd-b46e-c0c460d63fb4","ownerId":"101","folderId":null,"filename":"README.MD","content":"","protectionMode":"standard","protectMetadata":false});
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("TEXT_EMPTY"));
+    assert!(!fixture.path("created-files").exists());
+    for name in ["../escape.txt", "a/b.txt", "CON.txt", "bad.", "bad ", "　"] {
+        request["filename"] = json!(name);
+        request["content"] = json!("valid");
+        assert!(app
+            .failure(json!({"command":"creation_stage","request":request}))
+            .contains("FILE_NAME_INVALID"));
+    }
+    request["filename"] = json!("README.MD");
+    request["content"] = json!("é".repeat(524_288) + "x");
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("TEXT_TOO_LARGE"));
+    assert!(!fixture.path("created-files").exists());
+    request["filename"] = json!("README.MD");
+    request["content"] = json!("\u{feff}  日本語\r\n");
+    let staged = app.ok(json!({"command":"creation_stage","request":request}));
+    let path = staged["path"].as_str().unwrap();
+    let source = staged["source"].clone();
+    assert_eq!(
+        std::fs::read(path).unwrap(),
+        "\u{feff}  日本語\r\n".as_bytes()
+    );
+    let job = json!({"id":request["id"],"ownerId":"101","direction":"upload","kind":"local_upload","status":"paused","path":path,"filename":"README.MD","folderId":null,"createdSource":source,
+        "progress":0,"transferredBytes":0,"totalBytes":16,"speedBytesPerSec":0,"queuePosition":1,"revision":1,"createdAt":1,"updatedAt":1});
+    app.ok(json!({"command":"save_transfer","job":job}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"creation_sweep"}));
+    assert!(std::path::Path::new(path).exists());
+    assert_eq!(
+        app.ok(json!({"command":"transfers"}))[0]["createdSource"],
+        source
+    );
+    app.ok(json!({"command":"creation_verify","source":source,"path":path}));
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    assert!(app
+        .failure(json!({"command":"creation_verify","source":source,"path":path,"owner":"202"}))
+        .contains("ACCOUNT_CHANGED"));
+    app.ok(json!({"command":"creation_begin","source":source}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert!(app
+        .failure(json!({"command":"creation_verify","source":source,"path":path}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    assert!(app
+        .failure(json!({"command":"creation_begin","source":source}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    app.ok(json!({"command":"creation_finish","source":source,"messageId":881}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.ok(json!({"command":"creation_verify","source":source,"path":path}))["messageId"],
+        881
+    );
+    app.ok(json!({"command":"remove_transfer","id":request["id"]}));
+    app.ok(json!({"command":"creation_sweep"}));
+    assert!(!std::path::Path::new(path).exists());
+    assert!(app
+        .failure(json!({"command":"creation_stage","request":request}))
+        .contains("CREATE_REVIEW_REQUIRED"));
+    app.stop();
+}
+
+#[test]
+fn created_file_content_and_owned_cleanup_cross_restart_and_protected_envelopes() {
+    // Real owned staging, envelope streams and editor access across processes.
+    // Fixture files replace Telegram; this is not queue/SDK network acceptance.
+    for mode in ["standard", "vault", "passphrase", "vault_and_passphrase"] {
         let fixture = Fixture::new();
         let mut app = Backend::start(&fixture.0);
         app.ok(json!({"command":"seed_account","owner":101}));
         app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-        fixture.write("private.txt", b"original secret\r\n");
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,
+        let content = "  日本語\r\n";
+        let request = json!({"id":"268ea8a4-37c9-4abd-b46e-c0c460d63fb5","ownerId":"101","folderId":null,"filename":"notes.txt","content":content,"protectionMode":mode,"protectMetadata":true});
+        let staged = app.ok(json!({"command":"creation_stage","request":request}));
+        let path = staged["path"].as_str().unwrap();
+        let source = &staged["source"];
+        assert_eq!(std::fs::read(path).unwrap(), content.as_bytes());
+        fixture.write("unrelated.txt", b"never remove this");
+        assert!(app.failure(json!({"command":"creation_verify","source":source,"path":fixture.path("unrelated.txt")})).contains("Invalid owned creation source"));
+        if mode != "standard" {
+            app.ok(json!({"command":"fixture_encrypt","source":path,"createdSource":source,"destination":"remote.tdenc","text":true,"protectionMode":mode,"filePassphrase":"synthetic file password"}));
+        }
+        app.stop();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
+        if mode != "standard" {
+            app.ok(json!({"command":"read_envelope","source":"remote.tdenc","destination":"downloaded.txt","filePassphrase":"synthetic file password"}));
+            assert_eq!(fixture.read("downloaded.txt"), content.as_bytes());
+            assert_eq!(app.ok(json!({"command":"text_read","source":"remote.tdenc","filePassphrase":"synthetic file password"}))["content"], content);
+        }
+        std::fs::write(path, b"partial after crash").unwrap();
+        assert!(app
+            .failure(json!({"command":"creation_verify","source":source,"path":path}))
+            .contains("Creation source changed"));
+        app.ok(json!({"command":"creation_sweep"}));
+        assert!(!std::path::Path::new(path).exists());
+        assert_eq!(fixture.read("unrelated.txt"), b"never remove this");
+        assert!(app
+            .failure(json!({"command":"creation_stage","request":request}))
+            .contains("CREATE_REVIEW_REQUIRED"));
+        app.stop();
+    }
+}
+
+#[test]
+fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
+    for (mode, name) in [
+        ("vault", "private.txt"),
+        ("passphrase", "private.txt"),
+        ("vault_and_passphrase", "private.txt"),
+        ("vault", "private.md"),
+        ("passphrase", "private.MD"),
+        ("vault_and_passphrase", "private.MD"),
+    ] {
+        let fixture = Fixture::new();
+        let mut app = Backend::start(&fixture.0);
+        app.ok(json!({"command":"seed_account","owner":101}));
+        app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+        fixture.write(name, b"original secret\r\n");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true,
             "protectionMode":mode,"filePassphrase":"synthetic file password"}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
+        std::fs::remove_file(fixture.path(name)).unwrap();
         let original = fixture.read("original.tdenc");
         let opened = app.ok(json!({"command":"text_read","source":"original.tdenc","filePassphrase":"synthetic file password"}));
         assert_eq!(opened["content"], "original secret\r\n");
@@ -410,8 +536,16 @@ fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
         if mode == "vault_and_passphrase" {
             app.ok(json!({"command":"vault_unlock","passphrase":"synthetic vault password"}));
         }
-        app.ok(json!({"command":"text_replace","source":"edited.tdenc","destination":"empty.tdenc","content":"","filePassphrase":"synthetic file password"}));
-        assert_eq!(app.ok(json!({"command":"text_read","source":"empty.tdenc","filePassphrase":"synthetic file password"}))["content"], "");
+        assert!(app.failure(json!({"command":"text_replace","source":"edited.tdenc","destination":"empty.tdenc","content":"","filePassphrase":"synthetic file password"})).contains("TEXT_EMPTY"));
+        assert_eq!(fixture.read("edited.tdenc"), edited);
+        assert!(!fixture.path("empty.tdenc").exists());
+        app.ok(json!({"command":"text_replace","source":"edited.tdenc","destination":"valid.tdenc","content":"valid after refusal","filePassphrase":"synthetic file password"}));
+        assert_eq!(app.ok(json!({"command":"text_read","source":"valid.tdenc","filePassphrase":"synthetic file password"}))["content"], "valid after refusal");
+        // Old protected empty envelopes remain readable (mutation policy is not a format change).
+        fixture.write("legacy.txt", b"");
+        app.ok(json!({"command":"fixture_encrypt","source":"legacy.txt","destination":"legacy.tdenc","text":true,
+            "protectionMode":mode,"filePassphrase":"synthetic file password"}));
+        assert_eq!(app.ok(json!({"command":"text_read","source":"legacy.tdenc","filePassphrase":"synthetic file password"}))["content"], "");
         app.stop();
     }
 }
@@ -422,9 +556,9 @@ fn protected_text_rejects_wrong_keys_corruption_and_revoked_access_without_delet
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    fixture.write("private.txt", b"keep original");
-    app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
-    std::fs::remove_file(fixture.path("private.txt")).unwrap();
+    fixture.write("private.MD", b"keep original");
+    app.ok(json!({"command":"fixture_encrypt","source":"private.MD","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
+    std::fs::remove_file(fixture.path("private.MD")).unwrap();
     let original = fixture.read("original.tdenc");
     let opened = app.ok(json!({"command":"text_read","source":"original.tdenc"}));
     assert!(app
@@ -468,18 +602,43 @@ fn protected_text_read_enforces_the_one_mib_boundary_without_a_preview_cache() {
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    for size in [1024 * 1024, 1024 * 1024 + 1] {
-        fixture.write("private.txt", vec![b'a'; size]);
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":format!("{size}.tdenc"),"text":true}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
-        let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
-        if size == 1024 * 1024 {
-            assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
-        } else {
-            assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+    for name in ["private.txt", "private.MD"] {
+        for size in [1024 * 1024, 1024 * 1024 + 1] {
+            fixture.write(name, vec![b'a'; size]);
+            app.ok(json!({"command":"fixture_encrypt","source":name,"destination":format!("{size}.tdenc"),"text":true}));
+            std::fs::remove_file(fixture.path(name)).unwrap();
+            let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
+            if size == 1024 * 1024 {
+                assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
+            } else {
+                assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+            }
         }
     }
     assert!(!fixture.path("previews").exists());
+    app.stop();
+}
+
+#[test]
+fn protected_text_rejects_authenticated_non_document_extensions() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+    for name in ["private.cmd", "private.md.exe", "privatemd", "privatetxt"] {
+        fixture.write(name, b"not an editable document");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true}));
+        std::fs::remove_file(fixture.path(name)).unwrap();
+        let original = fixture.read("original.tdenc");
+        assert!(app
+            .failure(json!({"command":"text_read","source":"original.tdenc"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert!(app
+            .failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert_eq!(fixture.read("original.tdenc"), original);
+        assert!(!fixture.path("text-replacement.tdenc").exists());
+    }
     app.stop();
 }
 
@@ -2606,6 +2765,162 @@ fn connection_failures_retry_with_growing_waits_and_removed_transfers_expire() {
         .unwrap();
     dated.next().unwrap();
     assert_eq!(dated.read::<i64, _>(0).unwrap(), 1);
+}
+
+#[test]
+fn folder_name_encryption_survives_lock_restart_recovery_and_rejects_rebinding() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private folder fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    assert!(app
+        .failure(json!({"command":"folder_name_encrypt","folder":11}))
+        .contains("Unlock the vault"));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.failure(json!({"command":"folder_name_encrypt","folder":11,"maskFails":true}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Private folder fixture"
+    );
+    app.ok(json!({"command":"vault_lock"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    let view = app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    assert_eq!(view[0]["name"], "Private folder fixture");
+    assert_eq!(view[0]["is_encrypted"], true);
+    app.ok(json!({"command":"folder_name_rename","folder":11,"name":"Renamed private fixture"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    let record = app.ok(json!({"command":"folder_rows"}))[0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(record.starts_with("TDFOLDERNAME1:"));
+    assert!(!record.contains("Renamed private fixture"));
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-title-11")).unwrap(),
+        "Encrypted [TD] [TD-ENCRYPTED]"
+    );
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-record-11")).unwrap(),
+        record
+    );
+    app.ok(json!({"command":"folder_name_read","folder":12}));
+    app.ok(json!({"command":"vault_export","passphrase":"synthetic folder recovery password"}));
+    app.ok(json!({"command":"vault_lock"}));
+    let locked = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(locked.as_array().unwrap().len(), 1);
+    assert_eq!(locked[0]["name"], "Encrypted");
+    assert_eq!(locked[0]["is_locked"], true);
+    app.failure(json!({"command":"folder_name_read","folder":11}));
+    app.failure(json!({"command":"folder_name_read","folder":12}));
+    app.failure(
+        json!({"command":"folder_name_rename","folder":11,"name":"Locked rename must fail"}),
+    );
+    assert_eq!(app.ok(json!({"command":"folder_rows"}))[0]["name"], record);
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    // A scan or external title edit cannot silently downgrade local protection.
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"External title"},{"id":12,"name":"Child fixture"},{"id":13,"name":record}]}));
+    let rebound = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(rebound[0]["name"], "Renamed private fixture");
+    assert_eq!(
+        rebound
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["id"] == 13)
+            .unwrap()["is_locked"],
+        true
+    );
+    // Fresh installation: only Telegram's ciphertext and vault recovery travel.
+    app.stop();
+    let restored = Fixture::new();
+    restored.write("recovery.bundle", fixture.read("recovery.bundle"));
+    let mut app = Backend::start(&restored.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_recover","passphrase":"synthetic folder recovery password","vaultPassphrase":"synthetic restored folder vault"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    app.ok(json!({"command":"folder_sign_out"}));
+    app.ok(json!({"command":"seed_account","owner":202}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["is_locked"],
+        true
+    );
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn folder_name_encryption_withdraws_stale_webdav_catalogs() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    // Model a Telegram catalog walk started before protection completing late.
+    app.ok(json!({"command":"api_seed_catalog","folders":[{"id":null,"name":"Saved Messages"},{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}],"files":[]}));
+    let token = "f".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let url = format!("{}/dav/{token}/", dav["url"].as_str().unwrap());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let propfind = reqwest::Method::from_bytes(b"PROPFIND").unwrap();
+    for locked in [false, true] {
+        if locked {
+            app.ok(json!({"command":"vault_lock"}));
+        }
+        let response = client
+            .request(propfind.clone(), &url)
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 207);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("Saved%20Messages"));
+        assert!(!body.contains("Private"));
+        assert!(!body.contains("Child"));
+        let direct = client
+            .request(propfind.clone(), format!("{url}Private%20fixture/"))
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert!(!direct.status().is_success());
+    }
+    drop(client);
+    app.stop();
 }
 
 #[test]

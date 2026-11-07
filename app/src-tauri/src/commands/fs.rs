@@ -506,6 +506,7 @@ pub(crate) fn inferred_mime_type(path: &str) -> &'static str {
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "txt" => "text/plain",
+        "md" => "text/markdown",
         "zip" => "application/zip",
         _ => "application/octet-stream",
     }
@@ -1175,6 +1176,8 @@ pub async fn create_folder_inner(
         is_public: false,
         group_id: None,
         display_order: 0,
+        is_encrypted: false,
+        is_locked: false,
     })
 }
 
@@ -1213,6 +1216,11 @@ pub async fn cmd_create_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(
+        &account,
+        app.state::<crate::crypto::state::CryptoState>().inner(),
+        parent_id,
+    )?;
     create_folder_scoped(
         name,
         parent_id,
@@ -1231,6 +1239,9 @@ pub(crate) async fn create_folder_scoped(
     db: DbConnection,
 ) -> Result<FolderMetadata, String> {
     let name = name.trim();
+    if crate::folder_names::protected(name) {
+        return Err("Reserved folder name".into());
+    }
     if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
         return Err("Folder names must contain 1–120 characters without control characters".into());
     }
@@ -1289,6 +1300,8 @@ pub(crate) async fn create_folder(
                     is_public: false,
                     group_id: None,
                     display_order: 0,
+                    is_encrypted: false,
+                    is_locked: false,
                 },
             )?
         }
@@ -1359,6 +1372,11 @@ pub async fn cmd_delete_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(
+        &account,
+        app.state::<crate::crypto::state::CryptoState>().inner(),
+        Some(folder_id),
+    )?;
     delete_folder_scoped(folder_id, &account, state.inner(), db_pool.inner().clone()).await
 }
 
@@ -1411,6 +1429,8 @@ fn folder_stand_in(folder_id: i64, name: String) -> FolderMetadata {
         is_public: false,
         group_id: None,
         display_order: 0,
+        is_encrypted: false,
+        is_locked: false,
     }
 }
 
@@ -1496,6 +1516,16 @@ pub async fn cmd_rename_folder(
     {
         return Err("Folder names must contain 1–120 characters without control characters".into());
     }
+    if crate::folder_names::protected(&new_name) {
+        return Err("Reserved folder name".into());
+    }
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    crate::folder_names::ensure_readable(&account, &crypto, Some(folder_id))?;
+    let raw = crate::folder_names::cached(&account)?;
+    let protected = raw
+        .iter()
+        .find(|f| f.id == folder_id)
+        .is_some_and(|f| crate::folder_names::protected(&f.name));
     let client = state
         .client
         .lock()
@@ -1503,13 +1533,33 @@ pub async fn cmd_rename_folder(
         .clone()
         .ok_or("Client not connected")?;
     account.validate_client(&client).await?;
+    if protected {
+        let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
+        let transport = crate::folder_names::TelegramNameTransport {
+            client,
+            peer,
+            state: state.inner(),
+        };
+        return crate::folder_names::rename_protected(
+            &account,
+            &crypto,
+            db_pool.inner().clone(),
+            folder_id,
+            &new_name,
+            &transport,
+        )
+        .await;
+    }
     rename_folder_inner(folder_id, &new_name, &client, &state.peer_cache).await?;
+    let stored_name = new_name;
+    crate::api_catalog::invalidate(account.owner);
+    crate::local_search::invalidate();
     crate::db::with_connection(db_pool.inner().clone(), move |conn| {
         crate::folder_hierarchy::transaction(conn, &account, || {
             let mut stmt = conn
                 .prepare("UPDATE folder_metadata SET name=? WHERE channel_id=?")
                 .map_err(|e| e.to_string())?;
-            stmt.bind((1, new_name.as_str()))
+            stmt.bind((1, stored_name.as_str()))
                 .map_err(|e| e.to_string())?;
             stmt.bind((2, folder_id)).map_err(|e| e.to_string())?;
             stmt.next().map_err(|e| e.to_string())?;
@@ -2819,6 +2869,9 @@ async fn cmd_upload_file_inner(
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() {
+        if crate::file_creation::is_creation() {
+            return Err("Client not connected".into());
+        }
         log::info!("[MOCK] Uploaded file {} to {:?}", path, folder_id);
         return Ok("Mock upload successful".to_string());
     }
@@ -2935,6 +2988,8 @@ async fn cmd_upload_file_inner(
         let mut last_err = String::new();
         for attempt in 0..=max_retries {
             transfer_account.validate()?;
+            crate::file_creation::begin_publication(&app_handle, folder_id, &file_name, || Ok(()))
+                .await?;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             let publication = if let Some(video) = video_metadata.as_ref() {
                 crate::desktop_video_upload::publish(
@@ -2964,6 +3019,10 @@ async fn cmd_upload_file_inner(
                 .map_err(map_error);
             match publication {
                 Ok(sent) => {
+                    if crate::file_creation::is_creation() {
+                        upload_reservation.commit();
+                    }
+                    crate::file_creation::finish_publication(sent.id())?;
                     crate::file_inventory::changed(&transfer_account, folder_id, &[])?;
                     upload_reservation.commit();
                     if let Some(resumable) = &resumable {
@@ -2988,6 +3047,9 @@ async fn cmd_upload_file_inner(
                 }
                 Err(e) => {
                     let err = e;
+                    if crate::file_creation::is_creation() {
+                        return Err("[CREATE_REVIEW_REQUIRED] Telegram publication is uncertain; review the destination. Automatic resend is disabled.".into());
+                    }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if err == "Transfer cancelled"
                         || err.starts_with("ACCOUNT_CHANGED")
@@ -3165,6 +3227,9 @@ async fn cmd_upload_file_encrypted(
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() {
+        if crate::file_creation::is_creation() {
+            return Err("Client not connected".into());
+        }
         log::info!("[MOCK] Uploaded encrypted file {} to {:?}", path, folder_id);
         return Ok("Mock encrypted upload successful".to_string());
     }
@@ -3305,8 +3370,33 @@ async fn cmd_upload_file_encrypted(
         let mut last_err = String::new();
         for attempt in 0..=max_retries {
             transfer_account.validate()?;
+            crate::file_creation::begin_publication(
+                &app_handle,
+                folder_id,
+                source_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .as_ref(),
+                || {
+                    if let Some(session) = vault_session {
+                        crypto_state
+                            .with_current_session(session, || ())
+                            .map_err(|_| {
+                                "[VAULT_LOCKED] Upload credential changed before publication"
+                                    .to_string()
+                            })?;
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
             match client.send_message(&peer, message.clone()).await {
                 Ok(_sent) => {
+                    if crate::file_creation::is_creation() {
+                        bandwidth_reservation.commit();
+                    }
+                    crate::file_creation::finish_publication(_sent.id())?;
                     crate::file_inventory::changed(&transfer_account, folder_id, &[])?;
                     bandwidth_reservation.commit();
                     if let Some(resumable) = &resumable {
@@ -3368,6 +3458,9 @@ async fn cmd_upload_file_encrypted(
                 }
                 Err(e) => {
                     let err = map_error(e);
+                    if crate::file_creation::is_creation() {
+                        return Err("[CREATE_REVIEW_REQUIRED] Telegram publication is uncertain; review the destination. Automatic resend is disabled.".into());
+                    }
                     log::warn!(
                         "send_message attempt {}/{}: {}",
                         attempt + 1,
@@ -3956,6 +4049,7 @@ pub async fn cmd_save_text_file(
     if content.len() > MAX_EDITABLE_TEXT_BYTES {
         return Err("[TEXT_TOO_LARGE] This text file is too large to edit in the app".into());
     }
+    crate::file_creation::validate_text(&content)?;
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let client = state
         .client
@@ -5362,7 +5456,67 @@ async fn publish_folder_chunk(
     })
 }
 
+/// Collision preflight without registering/cancelling a UI folder scan.
+pub(crate) async fn check_creation_destination(
+    app: &tauri::AppHandle,
+    account: &crate::workspace::AccountGuard,
+    folder: Option<i64>,
+    name: &str,
+) -> Result<(), String> {
+    let state = app.state::<TelegramState>();
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    crate::folder_names::ensure_readable(account, &crypto, folder)?;
+    let db = app.state::<DbConnection>().inner().clone();
+    let captured = account.clone();
+    crate::db::with_connection(db, move |conn| {
+        crate::folder_hierarchy::transaction(conn, &captured, || {
+            crate::folder_hierarchy::check_parent(conn, 0, folder)
+        })
+    })
+    .await?;
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let credential = crypto.current_credential().ok();
+    let listing =
+        crate::file_inventory::messages_refresh(account, state.inner(), folder, true).await?;
+    if !listing.complete {
+        return Err(
+            "[CREATE_INVENTORY_INCOMPLETE] Refresh the complete destination before creating files"
+                .into(),
+        );
+    }
+    let mut reader = InventoryMetadataReader::new(
+        app,
+        account,
+        &client,
+        folder,
+        credential.as_ref().map(|(_, key)| key),
+    );
+    reader.require_known_names = true;
+    for message in listing.rows.iter() {
+        if let Some(file) = reader.read(message, (false, false)).await? {
+            if file.name.to_lowercase() == name.to_lowercase() {
+                return Err("[FILE_EXISTS] A file with this name already exists".into());
+            }
+        }
+    }
+    listing.ticket.validate(account)?;
+    if let Some((session, _)) = credential {
+        crypto
+            .with_current_session(session, || Ok::<(), String>(()))
+            .map_err(|_| "[VAULT_LOCKED] Reload the destination".to_string())??;
+    }
+    crate::folder_names::ensure_readable(account, &crypto, folder)?;
+    account.validate()
+}
+
 pub(crate) struct InventoryMetadataReader<'a> {
+    require_known_names: bool,
     app: &'a tauri::AppHandle,
     pub account: &'a crate::workspace::AccountGuard,
     pub client: &'a grammers_client::Client,
@@ -5380,6 +5534,7 @@ impl<'a> InventoryMetadataReader<'a> {
         vault_key: Option<&'a SecretKey>,
     ) -> Self {
         Self {
+            require_known_names: false,
             app,
             account,
             client,
@@ -5474,8 +5629,14 @@ impl<'a> InventoryMetadataReader<'a> {
                     }
                     _ => {
                         workspace_account.validate()?;
+                        if self.require_known_names {
+                            return Err("[CREATE_NAMES_LOCKED] Destination names are unavailable; unlock protected metadata and refresh".into());
+                        }
                     }
                 }
+            }
+            if self.require_known_names && protected && vault_key.is_none() {
+                return Err("[CREATE_NAMES_LOCKED] Unlock protected metadata before checking destination names".into());
             }
             let ext = std::path::Path::new(&name)
                 .extension()
@@ -5598,6 +5759,7 @@ impl<'a> InventoryMetadataReader<'a> {
                     size = plaintext_size;
                 }
                 if info.metadata_protected {
+                    let mut name_decoded = false;
                     name = "Encrypted file".to_string();
                     mime = Some("application/octet-stream".to_string());
                     ext = None;
@@ -5612,6 +5774,7 @@ impl<'a> InventoryMetadataReader<'a> {
                                     && !metadata.original_name.is_empty()
                                 {
                                     name = metadata.original_name;
+                                    name_decoded = true;
                                     mime = Some(metadata.mime_type);
                                     ext = std::path::Path::new(&name)
                                         .extension()
@@ -5621,10 +5784,19 @@ impl<'a> InventoryMetadataReader<'a> {
                             }
                         }
                     }
+                    if self.require_known_names && !name_decoded {
+                        return Err("[CREATE_NAMES_LOCKED] Unlock protected metadata before checking destination names".into());
+                    }
                 } else if !info.remote_name.is_empty() && name == "TDENC2" {
                     name = info.remote_name.clone();
                 }
             } else if suspected_tdenc2 {
+                if self.require_known_names {
+                    return Err(
+                        "[CREATE_NAMES_LOCKED] Protected destination names could not be verified"
+                            .into(),
+                    );
+                }
                 name = "Encrypted file".to_string();
                 mime = Some("application/octet-stream".to_string());
                 ext = None;
@@ -5664,6 +5836,7 @@ pub async fn cmd_get_files(
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     let workspace_account = crate::workspace::AccountGuard::open(&root, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(&workspace_account, &crypto_state, folder_id)?;
     let scan_started_at = std::time::Instant::now();
     let request_id = match request_id {
         Some(request_id) if !request_id.trim().is_empty() && request_id.len() <= 128 => request_id,
@@ -6014,6 +6187,8 @@ pub async fn cmd_scan_folders(
                             is_public,
                             group_id: None,
                             display_order: 0,
+                            is_encrypted: false,
+                            is_locked: false,
                         });
                         return cached_peer;
                     }
@@ -6031,6 +6206,8 @@ pub async fn cmd_scan_folders(
                             username,
                             group_id: None,
                             display_order: 0,
+                            is_encrypted: false,
+                            is_locked: false,
                         });
                         return cached_peer;
                     }
@@ -6083,6 +6260,8 @@ pub async fn cmd_scan_folders(
                                 username,
                                 group_id: None,
                                 display_order: 0,
+                                is_encrypted: false,
+                                is_locked: false,
                             })
                         } else {
                             None
@@ -6101,6 +6280,13 @@ pub async fn cmd_scan_folders(
     .await;
     folders.extend(legacy_results.into_iter().flatten());
 
+    for folder in &mut folders {
+        if folder.name.contains(crate::folder_names::MARKER) {
+            let peer = resolve_peer(&client, Some(folder.id), &state.peer_cache).await?;
+            folder.name = crate::folder_names::remote_name(&client, &peer).await?;
+        }
+    }
+
     log::info!(
         "Scan complete. Found {} folders. Peer cache size: {}. Elapsed: {:?}.",
         folders.len(),
@@ -6117,7 +6303,7 @@ pub async fn cmd_scan_folders(
     })
     .await?;
     crate::commands::search::verified_catalog(&catalog_account, &enriched)?;
-    Ok(enriched)
+    crate::folder_names::project_app(&app, Some(catalog_account.owner), enriched)
 }
 
 const MAX_ZIP_SOURCE_BYTES: u64 = 2_147_483_648;
@@ -6358,6 +6544,10 @@ pub async fn cmd_toggle_folder_visibility(
 ) -> Result<FolderMetadata, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let _gate = crate::folder_hierarchy::GATE.lock().await;
+    let raw = crate::folder_names::cached(&account)?;
+    if crate::folder_names::has_protected_ancestor(&raw, folder_id) {
+        return Err("Encrypted folders cannot be made public or shared.".into());
+    }
     let client_opt = { state.client.lock().await.clone() };
     if let Some(client) = &client_opt {
         account.validate_client(client).await?;
@@ -6374,6 +6564,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: make_public,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             },
         )?
     } else {
@@ -6507,6 +6699,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: true,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             }
         } else {
             // Make private: remove username
@@ -6528,6 +6722,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: false,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             }
         }
     };
@@ -6593,9 +6789,16 @@ pub struct FolderInviteInfo {
 
 #[tauri::command]
 pub async fn cmd_export_folder_invite(
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     folder_id: i64,
     state: State<'_, TelegramState>,
 ) -> Result<FolderInviteInfo, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let raw = crate::folder_names::cached(&account)?;
+    if crate::folder_names::has_protected_ancestor(&raw, folder_id) {
+        return Err("Encrypted folders cannot be made public or shared.".into());
+    }
     let client_opt = { state.client.lock().await.clone() };
 
     #[cfg(debug_assertions)]
@@ -6609,6 +6812,7 @@ pub async fn cmd_export_folder_invite(
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
+    account.validate_client(&client).await?;
     let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
     let (channel_id, access_hash) = match &peer {
         Peer::Channel(c) => (

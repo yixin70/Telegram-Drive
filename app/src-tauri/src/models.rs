@@ -94,6 +94,10 @@ pub struct FolderMetadata {
     // Local-first grouping & ordering metadata
     pub group_id: Option<i32>,
     pub display_order: i32,
+    #[serde(default)]
+    pub is_encrypted: bool,
+    #[serde(default)]
+    pub is_locked: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

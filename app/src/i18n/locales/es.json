@@ -1,4 +1,27 @@
 {
+  "file_creation": {
+    "file_exists": "Este nombre ya existe o está en cola. Elige otro nombre.",
+    "destination_unavailable": "No se pudieron verificar los nombres del destino. Conéctate, desbloquea los metadatos protegidos y actualiza la carpeta.",
+    "failed": "No se pudo confirmar la creación. Revisa Transferencias y el destino antes de volver a intentarlo.",
+    "check_request": "Comprobar solicitud original", "review_request": "No se pudo confirmar la admisión. Conserva esta solicitud sin cambios y compruébala de nuevo, o revisa Transferencias y el destino antes de crear otro archivo.",
+    "title": "Nuevo archivo", "filename": "Nombre completo del archivo", "content": "Texto inicial", "create": "Crear",
+    "text_empty": "Introduce al menos un byte de texto.", "invalid_name": "Usa un nombre seguro de hasta 120 caracteres, sin nombres reservados, separadores ni puntos o espacios finales.",
+    "name_help": "Incluye la extensión que quieras o ninguna. El nombre se conserva exactamente.",
+    "format_help": "Crea texto UTF-8 (hasta 1 MiB), no un documento de Word ni otro formato binario. Intro añade una línea; Ctrl+Intro crea. No se añade contenido oculto.",
+    "bytes_one": "{{count}} byte UTF-8", "bytes_many": "{{count}} bytes UTF-8", "bytes_other": "{{count}} bytes UTF-8",
+    "choose_destination": "Abre una carpeta o Mensajes guardados para crear un archivo.", "queued": "Creación en cola. El archivo aparecerá cuando Telegram confirme la subida.",
+    "filtered": "Archivo creado. Quita los filtros o actualiza esta carpeta para encontrarlo."
+  },
+  "folder_encryption": {
+    "unlock_required": "Desbloquea la bóveda para cifrar el nombre de esta carpeta.",
+    "private_required": "Haz privada esta carpeta antes de cifrar su nombre.",
+    "mask_pending": "El nombre está protegido localmente, pero Telegram aún puede mostrar el título original. Desbloquea la bóveda y vuelve a elegir Cifrar nombre de carpeta para terminar de ocultarlo.",
+    "action": "Cifrar nombre de carpeta",
+    "confirm": "¿Cifrar el nombre con la bóveda desbloqueada? Se mostrará como Encrypted al bloquearla y se ocultarán sus subcarpetas y archivos en esta aplicación. Telegram usará un título genérico. Esta acción no cifra el contenido de los archivos ni los nombres de los canales secundarios. Los títulos antiguos pueden permanecer en el historial o en copias. Guarda la copia de recuperación de la bóveda: la necesitarás para recuperar el nombre en otro dispositivo.",
+    "success": "Nombre de carpeta cifrado.",
+    "renamed": "Carpeta renombrada.",
+    "open_locked": "Desbloquea la bóveda para abrir esta carpeta."
+  },
   "hierarchy": {
     "incomplete": "Algunas carpetas del historial no están disponibles tras consultar Telegram. Se conservan las carpetas disponibles y los cambios pendientes; comprueba el acceso a los canales y reinténtalo.",
     "export": "Exportar organización", "import": "Restaurar organización", "exported": "Copia guardada. Mantenla privada: contiene relaciones entre canales, no archivos.", "backup_large": "La copia supera 16 MiB.", "import_preview": "¿Restaurar la ubicación de {{count}} carpetas? Las carpetas coincidentes usan la ubicación de la copia; las demás carpetas y el historial más reciente se conservan. Los canales eliminados o ausentes no se recrean. Esta reparación explícita vuelve a publicar los metadatos en Telegram y los sincroniza con tus otros dispositivos. Los archivos no cambian.",
@@ -1088,7 +1111,12 @@
     "text_saved": "Guardado.",
     "text_save_error": "No se pudo guardar. Inténtalo de nuevo.",
     "text_discard_confirm": "¿Descartar los cambios sin guardar?",
-    "text_revert": "Revertir"
+    "text_revert": "Revertir",
+    "markdown_edit": "Editar Markdown",
+    "markdown_preview": "Vista previa de Markdown",
+    "markdown_preview_region": "Vista previa de Markdown",
+    "markdown_image": "Imagen",
+    "markdown_image_blocked": "[Imagen bloqueada: {{alt}}]"
   },
   "operations": {
     "delete_file": "Eliminar archivo",

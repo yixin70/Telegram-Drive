@@ -5,6 +5,7 @@ import {
     Download,
     FolderInput,
     FolderPlus,
+    FilePlus,
     Filter,
     Globe,
     HardDrive,
@@ -54,6 +55,7 @@ interface TopBarProps {
     onSettingsClick: () => void;
     onRemoteUploadClick: () => void;
     onNewFolderClick: () => void;
+    onNewFileClick?: () => void;
     onShowShortcuts: () => void;
     onShowHelp: () => void;
     searchFilters: FileSearchFilters;
@@ -82,6 +84,7 @@ export function TopBar({
     onSettingsClick,
     onRemoteUploadClick,
     onNewFolderClick,
+    onNewFileClick,
     onShowShortcuts,
     onShowHelp,
     searchFilters,
@@ -237,6 +240,15 @@ export function TopBar({
                             className="toolbar-upload-action"
                         >
                             {t('common.upload')}
+                        </Button>
+
+                        <Button
+                            onClick={onNewFileClick}
+                            disabled={!onNewFileClick}
+                            title={!onNewFileClick ? t('file_creation.choose_destination') : undefined}
+                            leadingIcon={<FilePlus className="h-3.5 w-3.5" />}
+                        >
+                            {t('file_creation.title')}
                         </Button>
 
                         <Button

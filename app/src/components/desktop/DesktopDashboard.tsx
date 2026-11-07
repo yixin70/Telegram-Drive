@@ -1,6 +1,8 @@
 import { clearImageMemoryCaches } from '../../services/imagePreviewCache';
 import { sourceFolder } from '../../services/fileIdentity';
 import { folderPath } from '../../services/folderHierarchy';
+import { createCloudFile } from '../../services/fileCreation';
+import type { DesktopTransferJob } from '../../services/desktopTransferEngine';
 import { lazy, Suspense, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {NotesAccountContext} from '../../context/NotesAccountContext';
 import { ORGANIZE_FILES_EVENT } from '../../services/workspace';
@@ -59,6 +61,7 @@ import { getAdjacentPreview, previewFileKey, samePreviewFile as sameFile } from 
 import i18n from '../../i18n';
 
 const LazyNotesHost = lazy(() => import('./dashboard/FileNoteButtonContent').then(module => ({default: module.FileNotesHost})));
+const CreateFileDialog = lazy(() => import('./dashboard/CreateFileDialog').then(module => ({ default: module.CreateFileDialog })));
 const FolderNavigation = lazy(() => import('../FolderNavigation').then(module => ({ default: module.FolderNavigation })));
 const FolderHierarchyBackup = lazy(() => import('../FolderHierarchyBackup').then(module => ({ default: module.FolderHierarchyBackup })));
 const MoveToFolderModal = lazy(() => import('./dashboard/MoveToFolderModal').then(module => ({ default: module.MoveToFolderModal })));
@@ -86,7 +89,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const {
         store, folders, groups, activeFolderId, setActiveFolderId, isSyncing, isConnected,
         handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete,
-        handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite,
+        handleFolderRename, handleEncryptFolderName, handleFolderToggleVisibility, handleExportFolderInvite,
         handleCreateGroup, handleDeleteGroup, handleUpdateGroup, handleAssignFolderToGroup,
         handleReorderFolders, handleUpdateGroupOrder,
         accountId, handleMoveFolder, hierarchyStatus, hierarchyError, hierarchyConflicts,
@@ -130,10 +133,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const [createFolderRequest, setCreateFolderRequest] = useState(0);
+    const [createFileScope, setCreateFileScope] = useState<string | null>(null);
+    const [revealCreatedFile, setRevealCreatedFile] = useState<number | null>(null);
     const [activeSmartView, setActiveSmartView] = useState<SmartView | null>('recents');
     const [folderOverview, setFolderOverview] = useState(false);
     const [movingFolder, setMovingFolder] = useState<TelegramFolder | null>(null);
     const navigateFolder = (id: number | null, overview = false) => {
+        if (id !== null && folders.find(f => f.id === id)?.is_locked) { toast.info(t('folder_encryption.open_locked')); return; }
         setFolderOverview(overview);
         setActiveSmartView(null);
         setSelectedIds([]);
@@ -173,11 +179,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         let stop: (() => void) | undefined;
         void listen('vault-locked', () => {
             if (disposed) return;
+            toast.dismiss();
             clearImageMemoryCaches();
             fileLoadScopeRef.current.generation++;
             fileLoadSequenceRef.current++;
-            setPreviewFile(file => file?.encryption_state === 'encrypted_unlocked' ? null : file);
+            setPreviewFile(null);
             setMoveRequest(null);
+            setCreateFileScope(null);
             setFolderSyncProgress({ active: false, count: 0 });
             void queryClient.cancelQueries({ queryKey: ['files'] }).then(() => {
                 if (disposed) return;
@@ -222,6 +230,22 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [renameFolder, setRenameFolder] = useState<{ id: number; name: string } | null>(null);
     const [renameRequest, setRenameRequest] = useState<{ ownerId: string; file: TelegramFile } | null>(null);
     const renameFileTarget = renameRequest?.ownerId === accountId ? renameRequest.file : null;
+    const activeFolderLocked = activeFolderId !== null && !folders.some(f => f.id === activeFolderId && !f.is_locked);
+    useEffect(() => {
+        if (activeFolderLocked && activeSmartView === null) setFolderOverview(true);
+    }, [activeFolderLocked, activeSmartView]);
+    useEffect(() => {
+        let disposed = false;
+        let stop: (() => void) | undefined;
+        void listen('vault-locked', () => {
+            if (disposed) return;
+            setSelectedIds([]); setMovingFolder(null); setRenameFolder(null); setRenameRequest(null);
+            setPlayingFile(null); setPdfFile(null); setArchiveViewFile(null); setTextViewFile(null);
+            setShareFile(null); setBulkShareLinks(null); setPreviewContextFiles([]); setPreviewContextIndex(-1);
+            setInternalDrag(null); setLocalPreview(null); setWorkspaceKeys(null);
+        }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+        return () => { disposed = true; stop?.(); };
+    }, [setShareFile, setBulkShareLinks]);
     const moveFileTarget = showMoveModal && moveRequest?.files.length === 1 ? moveRequest.files[0] : null;
     useEffect(() => { setSelectedIds([]); setMoveRequest(null); setRenameRequest(null); setInternalDrag(null); }, [accountId]);
 
@@ -305,7 +329,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onProgress: setFolderSyncProgress,
             });
         },
-        enabled: !!store && !!accountId && !folderOverview,
+        enabled: !!store && !!accountId && !folderOverview && (!!activeSmartView || !activeFolderLocked),
         staleTime: 5 * 60_000,
         refetchOnWindowFocus: false,
         refetchOnReconnect: false,
@@ -313,11 +337,33 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
     const displayedFiles = useMemo(() => {
         const files = searchFilters.scope === 'all' ? searchResults : filterAndRankFiles(allFiles, searchTerm, searchFilters);
-        return files.map(file => activeSmartView !== null || searchFilters.scope === 'all'
+        return files.filter(file => file.folder_id == null || folders.some(f => f.id === file.folder_id && !f.is_locked)).map(file => activeSmartView !== null || searchFilters.scope === 'all'
             ? { ...file, folder_path: file.folder_id != null ? folderPath(folders, file.folder_id) : t('common.saved_messages') } : file);
     }, [allFiles, searchResults, searchTerm, searchFilters, folders, activeSmartView, t]);
     const isCrossFolderView = folderOverview || activeSmartView !== null
         || searchFilters.scope === 'all';
+    const creationScope = JSON.stringify([fileLoadScope, searchFilters.scope]);
+    const creationScopeRef = useRef(creationScope);
+    creationScopeRef.current = creationScope;
+    const openCreateFile = !isCrossFolderView && accountId ? () => setCreateFileScope(creationScope) : undefined;
+    useEffect(() => { setCreateFileScope(null); setRevealCreatedFile(null); }, [creationScope]);
+    const creationNotices = useRef(new Set<string>());
+    useEffect(() => {
+        if (!accountId || isCrossFolderView) return;
+        let disposed = false;
+        let stop: (() => void) | undefined;
+        void listen<DesktopTransferJob>('transfer-upserted', async ({ payload: job }) => {
+            if (disposed || !job.createdSource || job.status !== 'completed' || job.persistencePending || job.ownerId !== accountId || job.folderId !== activeFolderId || !job.messageId || creationNotices.current.has(job.id)) return;
+            creationNotices.current.add(job.id);
+            await invalidateFolderFileQueries(queryClient, job.folderId, job.ownerId);
+            if (disposed) return;
+            const files = queryClient.getQueryData<TelegramFile[]>(fileQueryKey(accountId, activeFolderId)) ?? [];
+            const visible = filterAndRankFiles(files, searchTerm, searchFilters).some(file => file.id === job.messageId);
+            if (visible) { setSelectedIds([job.messageId]); setRevealCreatedFile(job.messageId); }
+            else toast.info(t('file_creation.filtered'));
+        }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+        return () => { disposed = true; stop?.(); };
+    }, [accountId, activeFolderId, isCrossFolderView, queryClient, searchTerm, searchFilters, t]);
     useEffect(() => { if (isCrossFolderView) setSelectedIds([]); }, [isCrossFolderView]);
 
     const handleManualSync = useCallback(async () => {
@@ -338,7 +384,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     });
 
 
-    const { uploadQueue, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
+    const { uploadQueue, chooseAndStageProtection, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
     const { downloadQueue, queueDownload, queueBulkDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads, pauseAll: pauseDownloads, resumeAll: resumeDownloads, cancelItem: cancelDownloadItem, retryItem: retryDownloadItem } = useFileDownload(store, undefined, undefined, accountId ?? undefined);
 
     const {
@@ -409,6 +455,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setPreviewContextFiles([]);
         setPreviewContextIndex(-1);
         setArchiveViewFile(null);
+        setTextViewFile(null);
     }, [accountId, activeFolderId, activeSmartView]);
 
 
@@ -588,7 +635,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const navigatePreview = useCallback((step: 1 | -1) => {
         const next = getAdjacentPreview(
             previewContextFiles,
-            previewFile ?? playingFile ?? pdfFile ?? archiveViewFile,
+            previewFile ?? playingFile ?? pdfFile ?? archiveViewFile ?? textViewFile,
             step,
         );
         if (!next) return;
@@ -877,6 +924,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onMoveFolder={setMovingFolder}
                 onDelete={handleFolderDelete}
                 onRename={(id, name) => setRenameFolder({ id, name })}
+                onEncryptName={id => { void handleEncryptFolderName(id); }}
                 onToggleVisibility={async (id, _name, isPublic) => {
                     try {
                         await handleFolderToggleVisibility(id, !isPublic);
@@ -935,6 +983,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onSettingsClick={() => setShowSettings(true)}
                     onRemoteUploadClick={() => setShowRemoteUpload(true)}
                     onNewFolderClick={() => setCreateFolderRequest((value) => value + 1)}
+                    onNewFileClick={openCreateFile}
                     onShowShortcuts={() => setShowShortcuts(true)}
                     onShowHelp={() => setShowHelp(true)}
                 />}
@@ -963,6 +1012,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onDownload={(file) => queueDownload(file.id, file.name, sourceFolder(file, activeFolderId), file.size)}
                     onPreview={handlePreview}
                     onManualUpload={handleManualUpload}
+                    onNewFile={openCreateFile}
+                    revealFileId={revealCreatedFile}
                     onFolderUpload={handleFolderUpload}
                     showFolderUpload={settings.zipFolders}
                     onToggleSelection={handleToggleSelection}
@@ -979,6 +1030,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     selectionDisabled={isCrossFolderView}
                 />}
             </section>
+            {createFileScope === creationScope && openCreateFile && accountId && <Suspense fallback={null}><CreateFileDialog key={creationScope} destination={currentViewName} onClose={() => setCreateFileScope(null)} prepareProtection={chooseAndStageProtection} onCreate={async (id, filename, content, protection) => {
+                if (creationScopeRef.current !== creationScope) throw new Error('ACCOUNT_CHANGED');
+                const job = await createCloudFile(id, accountId, activeFolderId, filename, content, protection);
+                if (creationScopeRef.current !== creationScope) return;
+                if (job.status === 'completed') await invalidateFolderFileQueries(queryClient, activeFolderId, accountId);
+                else toast.info(t('file_creation.queued'));
+            }} /></Suspense>}
             {movingFolder && <Suspense fallback={null}><MoveToFolderModal folders={folders} movingFolderId={movingFolder.id} activeFolderId={movingFolder.parent_id ?? null} onClose={() => setMovingFolder(null)} onSelect={async parent => {
                 try { await handleMoveFolder(movingFolder.id, parent); setMovingFolder(null); }
                 catch (error) { toast.error(String(error)); }

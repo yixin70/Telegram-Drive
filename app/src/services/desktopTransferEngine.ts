@@ -40,6 +40,8 @@ export interface DesktopTransferJob {
     videoUploadMode?: VideoUploadMode;
     videoFilenameCaption?: boolean;
     tempZipPath?: string;
+    createdSource?: { id: string; filename: string; fingerprint: string; contentHash: string };
+    persistencePending?: boolean;
     /** Set when another part of the app, such as Folder Sync, runs the transfer. */
     origin?: string;
     progress: number;

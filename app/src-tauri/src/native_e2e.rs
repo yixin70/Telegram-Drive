@@ -1660,12 +1660,25 @@ impl Driver {
             | "text_read"
             | "text_replace"
             | "read_envelope" => self.dispatch_crypto(request).await,
-            "hierarchy_sync" | "hierarchy_move" | "hierarchy_delete" | "hierarchy_backup"
-            | "hierarchy_restore" | "folder_create" | "folder_delete" | "folder_rename"
-            | "folder_layout" | "folder_scan" | "group_create" | "folder_assign"
-            | "folder_sign_out" | "folder_rows" | "seed_folder_row" => {
-                self.dispatch_folders(request).await
-            }
+            "hierarchy_sync"
+            | "hierarchy_move"
+            | "hierarchy_delete"
+            | "hierarchy_backup"
+            | "hierarchy_restore"
+            | "folder_create"
+            | "folder_delete"
+            | "folder_rename"
+            | "folder_layout"
+            | "folder_scan"
+            | "group_create"
+            | "folder_assign"
+            | "folder_sign_out"
+            | "folder_rows"
+            | "seed_folder_row"
+            | "folder_name_encrypt"
+            | "folder_name_rename"
+            | "folder_name_view"
+            | "folder_name_read" => self.dispatch_folders(request).await,
             "staging_root" | "log_start" | "log_emit" | "startup_failure_message" => {
                 self.dispatch_diagnostics(request).await
             }
@@ -1696,6 +1709,11 @@ impl Driver {
             | "upload_assemble"
             | "publish_download"
             | "save_transfer"
+            | "creation_stage"
+            | "creation_verify"
+            | "creation_begin"
+            | "creation_finish"
+            | "creation_sweep"
             | "transfers"
             | "fail_transfer"
             | "remove_transfer" => self.dispatch_transfers(request).await,
@@ -4543,6 +4561,93 @@ impl Driver {
 
     async fn dispatch_folders(&mut self, request: Value) -> Result<Value, String> {
         match text(&request, "command")? {
+            "folder_name_encrypt"
+            | "folder_name_rename"
+            | "folder_name_view"
+            | "folder_name_read" => {
+                let account = crate::workspace::AccountGuard::open(&self.root, None)?;
+                let id = request["folder"].as_i64().unwrap_or_default();
+                match text(&request, "command")? {
+                    "folder_name_view" => serde_json::to_value(crate::folder_names::project(
+                        &self.crypto,
+                        account.owner,
+                        crate::folder_names::cached(&account)?,
+                    ))
+                    .map_err(error),
+                    "folder_name_read" => {
+                        crate::folder_names::ensure_readable(&account, &self.crypto, Some(id))?;
+                        Ok(json!(true))
+                    }
+                    _ => {
+                        struct Remote {
+                            root: PathBuf,
+                            folder: i64,
+                            mask_fails: bool,
+                        }
+                        impl crate::folder_names::NameTransport for Remote {
+                            fn publish<'a>(
+                                &'a self,
+                                record: &'a str,
+                            ) -> futures::future::BoxFuture<'a, Result<(), String>>
+                            {
+                                Box::pin(async move {
+                                    std::fs::write(
+                                        self.root
+                                            .join(format!("folder-name-record-{}", self.folder)),
+                                        record,
+                                    )
+                                    .map_err(error)
+                                })
+                            }
+                            fn mask(
+                                &self,
+                                folder: i64,
+                            ) -> futures::future::BoxFuture<'_, Result<(), String>>
+                            {
+                                Box::pin(async move {
+                                    if self.mask_fails {
+                                        return Err("Controlled channel-title failure".into());
+                                    }
+                                    std::fs::write(
+                                        self.root.join(format!("folder-name-title-{folder}")),
+                                        "Encrypted [TD] [TD-ENCRYPTED]",
+                                    )
+                                    .map_err(error)
+                                })
+                            }
+                        }
+                        let remote = Remote {
+                            root: self.root.clone(),
+                            folder: id,
+                            mask_fails: request["maskFails"] == true,
+                        };
+                        if request["command"] == "folder_name_rename" {
+                            let _gate = crate::folder_hierarchy::GATE.lock().await;
+                            return crate::folder_names::rename_protected(
+                                &account,
+                                &self.crypto,
+                                crate::db::init_db_at(&self.root)?,
+                                id,
+                                text(&request, "name")?,
+                                &remote,
+                            )
+                            .await
+                            .map(|done| json!(done));
+                        }
+                        serde_json::to_value(
+                            crate::folder_names::encrypt(
+                                &account,
+                                &self.crypto,
+                                crate::db::init_db_at(&self.root)?,
+                                id,
+                                &remote,
+                            )
+                            .await?,
+                        )
+                        .map_err(error)
+                    }
+                }
+            }
             "hierarchy_sync" | "hierarchy_move" | "hierarchy_delete" | "hierarchy_backup"
             | "hierarchy_restore" => {
                 let account =
@@ -4689,6 +4794,8 @@ impl Driver {
                         is_public: false,
                         group_id: None,
                         display_order: 0,
+                        is_encrypted: false,
+                        is_locked: false,
                     })
                     .collect();
                 let db = crate::db::init_db_at(&self.root)?;
@@ -5221,6 +5328,48 @@ impl Driver {
                 .await?;
                 serde_json::to_value(result).map_err(error)
             }
+            // Child-process/private-storage boundary using production staging,
+            // receipt and publication-latch code. No Telegram scheduler here.
+            "creation_stage" => {
+                let input: crate::file_creation::CreateFileRequest =
+                    serde_json::from_value(request["request"].clone()).map_err(error)?;
+                let source = input.validate()?;
+                let account = AccountGuard::open(&self.root, Some(&input.owner_id))?;
+                let path = crate::file_creation::stage(&account, &input, &source)?;
+                Ok(json!({"source":source,"path":path}))
+            }
+            "creation_verify" | "creation_begin" | "creation_finish" => {
+                let account = AccountGuard::open(&self.root, request["owner"].as_str())?;
+                let source: crate::file_creation::CreatedSource =
+                    serde_json::from_value(request["source"].clone()).map_err(error)?;
+                match text(&request, "command")? {
+                    "creation_verify" => {
+                        crate::file_creation::verify(&account, &source, text(&request, "path")?)?;
+                        Ok(
+                            json!({"messageId":crate::file_creation::publication_result(&account, &source)?}),
+                        )
+                    }
+                    "creation_begin" => {
+                        crate::file_creation::latch_publication(&account, &source)?;
+                        Ok(json!(true))
+                    }
+                    _ => {
+                        let id = request["messageId"].as_i64().ok_or("Missing messageId")? as i32;
+                        crate::file_creation::with_source(account, source, async {
+                            crate::file_creation::finish_publication(id)
+                        })
+                        .await?;
+                        Ok(json!(true))
+                    }
+                }
+            }
+            "creation_sweep" => {
+                let account = AccountGuard::open(&self.root, request["owner"].as_str())?;
+                let (_, jobs) =
+                    crate::transfer_engine::TransferStore::open(&self.root.join("transfers.db"))?;
+                crate::file_creation::sweep_orphans(&account, &jobs)?;
+                Ok(json!(true))
+            }
             "save_transfer" => {
                 let (store, _) =
                     crate::transfer_engine::TransferStore::open(&self.root.join("transfers.db"))?;
@@ -5330,7 +5479,15 @@ impl Driver {
 
     /// Generate fixture ciphertext with production slot construction and encoding.
     async fn create_encrypted_fixture(&self, request: &Value) -> Result<Value, String> {
-        let source = child(&self.root, text(request, "source")?)?;
+        let source = if !request["createdSource"].is_null() {
+            let owned = serde_json::from_value(request["createdSource"].clone()).map_err(error)?;
+            let account = AccountGuard::open(&self.root, None)?;
+            let path = text(request, "source")?;
+            crate::file_creation::verify(&account, &owned, path)?;
+            PathBuf::from(path)
+        } else {
+            child(&self.root, text(request, "source")?)?
+        };
         let destination = child(&self.root, text(request, "destination")?)?;
         let input = tokio::fs::File::open(&source).await.map_err(error)?;
         let size = input.metadata().await.map_err(error)?.len();

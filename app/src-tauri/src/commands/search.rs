@@ -113,19 +113,31 @@ async fn offline_snapshot(
     account: &AccountGuard,
     folder: Option<&str>,
     credential: Option<crate::crypto::state::UnlockSessionId>,
+    crypto: CryptoState,
 ) -> Result<Snapshot, String> {
     let scope = account.clone();
     let requested = requested_folder(folder)?;
     tokio::task::spawn_blocking(move || {
         scope.validate()?;
         let store = Store::open(&scope.root, scope.owner)?;
-        let folders = store
+        let mut folders = store
             .record::<Vec<i64>>("search-folders-v1", "verified")?
             .unwrap_or_default();
+        let raw = crate::folder_names::cached(&scope)?;
+        let projected = crate::folder_names::project(&crypto, scope.owner, raw.clone());
+        folders.retain(|id| {
+            !crate::folder_names::has_protected_ancestor(&raw, *id)
+                || projected.iter().any(|f| f.id == *id && !f.is_locked)
+        });
         if requested.flatten().is_some_and(|id| !folders.contains(&id)) {
             return Err("NOT_DRIVE_FOLDER: Search is limited to Telegram Drive folders".into());
         }
-        let (rows, _) = store.search_rows(&folders, folder_key(requested).as_deref())?;
+        let (mut rows, _) = store.search_rows(&folders, folder_key(requested).as_deref())?;
+        for row in &mut rows {
+            if let Some(folder) = projected.iter().find(|f| Some(f.id) == row.file.folder_id) {
+                row.folder_name = folder.name.clone();
+            }
+        }
         scope.validate()?;
         Ok(Snapshot {
             rows,
@@ -155,6 +167,7 @@ impl Source for LiveSource {
                     account,
                     folder,
                     crypto.current_credential().ok().map(|(id, _)| id),
+                    crypto.inner().clone(),
                 )
                 .await;
             };
@@ -167,6 +180,7 @@ impl Source for LiveSource {
                     account,
                     folder,
                     crypto.current_credential().ok().map(|(id, _)| id),
+                    crypto.inner().clone(),
                 )
                 .await;
             }
@@ -182,6 +196,7 @@ impl Source for LiveSource {
                             account,
                             folder,
                             crypto.current_credential().ok().map(|(id, _)| id),
+                            crypto.inner().clone(),
                         )
                         .await;
                     }
@@ -200,6 +215,10 @@ impl Source for LiveSource {
                 return Err("NOT_DRIVE_FOLDER: Search is limited to Telegram Drive folders".into());
             }
             let credential = crypto.current_credential().ok();
+            let discovered = crate::folder_names::project(&crypto, account.owner, discovered)
+                .into_iter()
+                .filter(|f| !f.is_locked)
+                .collect::<Vec<_>>();
             let session = credential.as_ref().map(|(id, _)| *id);
             let key = credential.as_ref().map(|(_, key)| key);
             let folders = std::iter::once((None, "Saved Messages".to_string()))

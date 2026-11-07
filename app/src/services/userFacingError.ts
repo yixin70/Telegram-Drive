@@ -1,6 +1,9 @@
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const SAFE_ERROR_KEYS: Record<string, string> = {
+  FOLDER_NAME_VAULT_LOCKED: 'folder_encryption.unlock_required',
+  FOLDER_NAME_PRIVATE_REQUIRED: 'folder_encryption.private_required',
+  FOLDER_NAME_MASK_PENDING: 'folder_encryption.mask_pending',
   VAULT_LOCKED: 'settings.vault_is_locked',
   ENCRYPTED_SHARE_UNAVAILABLE: 'common.operation_failed',
   ENCRYPTED_PREVIEW_UNAVAILABLE: 'archive.failed_read',
