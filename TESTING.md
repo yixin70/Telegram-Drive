@@ -82,6 +82,19 @@ These results establish the exercised native boundaries, not live Telegram or
 installed-app acceptance. Live Telegram and installed Windows acceptance above
 have **not** been run.
 
+PR integration verification (2026-11-07): after merging current `main`'s Markdown
+and encrypted-folder-name changes, the same full native command rebuilt Cargo's
+driver and passed **250/250 tests**, with **0 failed, ignored or filtered out**.
+Test execution took 2012.15 seconds (33 minutes 32.15 seconds), following a
+3-minute 59-second build. This integrated-source result supersedes the earlier
+247-test run. All **47 browser journeys** across file creation, text/Markdown,
+folder encryption/hierarchy, upload protection and transfer cleanup/speeds passed
+on isolated port 4279 (one worker, 2.5 minutes). The Markdown navigation assertion
+uses Playwright's configured base URL rather than assuming the default port.
+Integrated-source frontend build/bundle budgets, localization, Clippy with
+`-D warnings`, Rust formatting, app-security and test-policy checks also passed.
+No installed Windows or live Telegram acceptance is implied.
+
 ## Encrypted folder names
 
 From `app/`, run `npx playwright test tests/e2e/folder-encryption.spec.ts tests/e2e/folder-hierarchy.spec.ts --workers=1`.
