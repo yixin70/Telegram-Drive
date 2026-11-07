@@ -24,7 +24,6 @@ window.addEventListener('file-notes-account-changed', closeEditor);
 const Dialog = lazy(() => import('./FileNotesDialog'));
 export function FileNotesHost() {
     const owner = useNotesAccount();
-    useLayoutEffect(() => () => {window.dispatchEvent(new Event('file-notes-account-changed'));}, [owner]);
     const target = useSyncExternalStore(listener => {subscribers.add(listener); return () => {subscribers.delete(listener);};}, () => editor);
     return target && target.owner === owner ? <Suspense fallback={null}><Dialog key={`${owner}:${target.location.folderId}:${target.location.messageId}`} {...target} onClose={closeEditor} /></Suspense> : null;
 }

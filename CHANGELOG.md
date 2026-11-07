@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Remove in-app updates and version reminders
+
+- Remove startup, periodic and resume update checks, the update banner, Settings update controls, in-app installation/restart, and post-upgrade What's New popups.
+- Preserve manual Windows installer upgrades, release signing and sidecars, application identity, settings, sessions and stored data. The legacy `autoUpdate` setting remains compatible but inert; old reminder metadata is left untouched. Older binaries retain their original behavior until replaced.
+- Add browser absence journeys for both supported languages, legacy/default/reset/restored settings, long-running/resumed windows and old or unavailable reminder storage. Native network silence and signed manual-upgrade acceptance still require a disposable Windows profile; browser fixtures alone do not prove them.
+
 ### Platform support
 - Retired macOS, Linux and all Android builds/releases, mobile UI, TV navigation, mobile capabilities and Android packaging/emulator targets. Windows x64 is the only supported application platform; mobile CLI builds are explicitly rejected.
 - Preserved the Windows application identifier, credential identity and user data. Historical APKs are unchanged, not revoked, and no replacement APK is required. Android-source publication protections remain in force.

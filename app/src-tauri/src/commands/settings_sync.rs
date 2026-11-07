@@ -23,7 +23,7 @@ const ARGON2_ITERATIONS: u32 = 3;
 const ARGON2_PARALLELISM: u32 = 1;
 
 const BOOLEAN_KEYS: &[&str] = &[
-    "autoUpdate",
+    "autoUpdate", // Inert locally; preserve older-client encrypted settings compatibility.
     "zipFolders",
     "videoFilenameCaption",
     "sidebarCollapsed",

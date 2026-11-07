@@ -5,7 +5,7 @@ export const SYNCABLE_SETTING_KEYS = [
   'viewMode',
   'fileSortField',
   'fileSortDirection',
-  'autoUpdate',
+  'autoUpdate', // Inert locally; preserve older-client encrypted settings compatibility.
   'maxConcurrentUploads',
   'maxConcurrentDownloads',
   'zipFolders',

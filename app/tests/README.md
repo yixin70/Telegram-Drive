@@ -7,11 +7,12 @@ CI keeps diagnostic retries, but a test that only passes on retry still fails th
 
 `e2e/` drives the real app entry point and provider tree through authentication,
 account retry and stale-result rejection, folder loading, sign-out recovery,
-settings persistence, image preview, account-scoped actions, and updater
-retry/package-manager behavior. Native commands and external services
+settings persistence, image preview, account-scoped actions, and the absence of
+retired updater checks and reminders across startup, old timer horizons, resume,
+Settings/reset/restored legacy settings and old reminder storage. Native commands and external services
 are replaced at the Tauri boundary with deterministic browser fixtures. Assertions
 check visible results after user actions, with boundary call inspection for
-forbidden actions such as duplicate mutations, early install, or premature logout
+forbidden actions such as duplicate mutations, updater calls/restarts, or premature logout
 cleanup. No real Telegram account, credential store or application
 installer is contacted.
 
@@ -22,7 +23,8 @@ development-only feature fixture rather than the whole app; they supplement the
 complete app journeys and are not native-device E2E proof.
 
 These browser runs do not establish native SQLite/locking behavior, cryptographic
-correctness, real Telegram transfer reliability, real OS updater installation, or
+correctness, real Telegram transfer reliability, native update-network silence,
+manual signed installer upgrades, or
 Android lifecycle/Keystore behavior. Those require the native E2E suites plus
 isolated device release exercises.
 Do not replace missing native coverage with another browser stub or claim that a

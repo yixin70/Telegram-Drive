@@ -3,8 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { load } from "@tauri-apps/plugin-store";
 import { AppProviders } from "./components/shared/AppProviders";
 import { ErrorBoundary } from "./components/shared/ErrorBoundary";
-import { UpdateBanner } from "./components/shared/UpdateBanner";
-import { useUpdates } from "./context/UpdateContext";
 import "./App.css";
 
 const DesktopDashboard = React.lazy(() => import("./components/desktop/DesktopDashboard").then(m => ({ default: m.Dashboard })));
@@ -27,14 +25,11 @@ import { useTheme } from "./context/ThemeContext";
 import { CrashReportingConsent } from "./components/shared/CrashReportingConsent";
 import { configureCrashTelemetry } from "./services/crashTelemetry";
 import { TelegramCooldownBanner } from "./components/shared/TelegramCooldownBanner";
-const WhatsNewDialog = React.lazy(() => import("./components/shared/WhatsNewDialog").then(m => ({ default: m.WhatsNewDialog })));
 import { useSettings } from "./context/SettingsContext";
 import { useTranslation } from "react-i18next";
 
 import { getLanguageInfo } from "./i18n/languages";
 import { resolveLanguagePreference } from "./i18n/resolveLanguage";
-import { version as appVersion } from "../package.json";
-import { consumeWhatsNew, type WhatsNewDetails } from "./services/updateReliability";
 import { ensureLanguageResource } from "./i18n";
 import { publishNativeLanguage } from "./services/nativeLanguage";
 
@@ -53,9 +48,7 @@ function AppContent() {
     stage: "initial",
     percent: 8,
   });
-  const [whatsNew, setWhatsNew] = useState<WhatsNewDetails | null>(() => consumeWhatsNew(appVersion));
   const { theme } = useTheme();
-  const { available, version, downloading, progress, phase, managedByPackageManager, downloadAndInstall, dismissUpdate } = useUpdates();
   const { settings, updateSetting, isLoaded, persistenceStatus, retryPersistence } = useSettings();
   const { i18n, t } = useTranslation();
 
@@ -202,16 +195,6 @@ function AppContent() {
 
   return (
     <main className="absolute inset-0 text-telegram-text overflow-hidden selection:bg-telegram-primary/30">
-      <UpdateBanner
-        available={available}
-        version={version}
-        downloading={downloading}
-        progress={progress}
-        phase={phase}
-        managedByPackageManager={managedByPackageManager}
-        onUpdate={downloadAndInstall}
-        onDismiss={dismissUpdate}
-      />
       <Toaster theme={theme} position="bottom-center" />
       <TelegramCooldownBanner />
       {persistenceStatus === 'error' && (
@@ -222,7 +205,6 @@ function AppContent() {
           </button>
         </div>
       )}
-      {whatsNew && <Suspense fallback={null}><WhatsNewDialog details={whatsNew} onClose={() => setWhatsNew(null)} /></Suspense>}
       {isLoaded && <CrashReportingConsent />}
       {authStatus === "authenticated" && (
         <Suspense fallback={
