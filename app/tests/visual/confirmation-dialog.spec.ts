@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { desktopFixture } from '../e2e/desktop-fixture';
 
 test.beforeEach(async ({ page }) => {
+    // The real provider subscribes to native vault-lock events, including in this direct fixture.
+    await desktopFixture(page);
     await page.route('**/__confirmation_browser', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1" /></head><body><div id="confirmation-fixture"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>(type)=>type;window.__vite_plugin_react_preamble_installed__=true;</script><script type="module" src="/src/components/dev/ConfirmationBrowserFixture.tsx"></script></body></html>` }));
     await page.goto('/__confirmation_browser');
 });
@@ -41,4 +44,15 @@ test('unavailable haptic feedback cannot strand sign-out confirmation', async ({
     await dialog.getByRole('button', { name: 'Sign Out' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByTestId('decisions')).toHaveText('[true]');
+});
+
+test('a native vault lock dismisses the confirmation and resolves it as cancelled', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.getByRole('button', { name: 'Log Out' }).click();
+    await expect(page.getByRole('dialog', { name: 'Sign Out' })).toBeVisible();
+    await page.evaluate(() => (window as any).__desktopTest.emit('vault-locked', {}));
+    await expect(page.getByRole('dialog', { name: 'Sign Out' })).toHaveCount(0);
+    await expect(page.getByTestId('decisions')).toHaveText('[false]');
+    expect(errors).toEqual([]);
 });

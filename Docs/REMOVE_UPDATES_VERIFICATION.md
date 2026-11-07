@@ -146,6 +146,55 @@ or evidence of profile-preserving upgrade acceptance. Release publication,
 production Authenticode/updater-sidecar signing and installed startup remain
 unverified here.
 
+## Integration with current main
+
+Before PR merge, `origin/main` at `61a9f8f` was merged into this branch. This
+preserves the independently landed Markdown preview, encrypted-folder-name and
+initial-content file-creation features. The earlier complete browser/native and
+Windows artifact results above predate this integration; they are not represented
+as a rebuilt installer or a complete native run of the integrated revision.
+
+The integrated TypeScript/production build and all unchanged bundle ceilings
+passed: initial JavaScript 477,543/513,000 bytes, total JavaScript
+2,572,317/3,300,000 bytes and dashboard route 287,911/302,000 bytes. Localization,
+test/security/formatting policies, baseline expiry, workflow pins, Node licenses,
+Rust advisory-baseline validation and `cargo fmt --check` passed again. Serial
+reruns passed assurance **15/15** and startup harness **20/20**; an earlier
+concurrent assurance attempt missed the unchanged two-second readiness deadline.
+
+The first integrated full browser run passed **186/187**. The confirmation fixture
+did not provide the native event boundary added to the real provider by the
+folder-encryption feature. The test now installs that controlled boundary and
+also verifies vault-lock cancellation. No production behavior, existing assertion
+or snapshot was weakened. The next two full runs each passed **187/188**,
+including all three confirmation tests and all twelve updater-absence tests.
+Their sole failure was the unchanged cold-hover notes test observing two startup
+reads instead of one; that same case passed in the first run. This is recorded
+as an intermittent failure, not silently counted as a clean integrated suite.
+
+A matching 55-test comparison, covering every journey preceding that failure
+and the full notes suite, passed **55/55** on an isolated, unmodified export of
+`origin/main` (`61a9f8f`) and **55/55** on this PR. The notes implementation and
+notes test are unchanged from that main revision. These subset passes do not
+establish a clean full integrated suite or prove that the full-run failure
+already exists on main. Its cause remains unconfirmed. Temporary diagnostic
+logging was removed; the original one-read assertion remains intact.
+
+The targeted notes, confirmation and updater-absence suites then passed
+**46/46** with `--repeat-each=2`, including both repetitions of the previously
+failing cold-hover case. No notes code or notes assertions were changed; this
+does not establish the intermittent failure's cause. Integrated native E2E
+subsets passed **31/31**: created files (2), folder-name encryption (2), protected
+text/notes (5), HEIC (19), account isolation (1), database upgrade (1) and
+vault/envelope recovery (1). The integrated target now contains 250 tests; the
+remaining tests were filtered in this targeted run, not counted as passes.
+Integrated Clippy passed again with `--features native-e2e --lib --all-targets
+-- -D warnings`.
+
+PR #3 currently has no GitHub status-check runs. Local results are not described
+as passing GitHub CI; no workflow, repository-protection or Actions setting was
+changed to enable the merge.
+
 ## Remaining release acceptance
 
 The follow-up environment check found no usable Windows Sandbox, Hyper-V VM
