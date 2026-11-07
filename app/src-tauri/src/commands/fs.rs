@@ -506,6 +506,7 @@ pub(crate) fn inferred_mime_type(path: &str) -> &'static str {
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "txt" => "text/plain",
+        "md" => "text/markdown",
         "zip" => "application/zip",
         _ => "application/octet-stream",
     }

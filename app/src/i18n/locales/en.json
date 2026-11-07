@@ -1110,7 +1110,12 @@
     "text_saved": "Saved.",
     "text_save_error": "Could not save. Please try again.",
     "text_discard_confirm": "Discard unsaved changes?",
-    "text_revert": "Revert"
+    "text_revert": "Revert",
+    "markdown_edit": "Edit Markdown",
+    "markdown_preview": "Preview Markdown",
+    "markdown_preview_region": "Markdown preview",
+    "markdown_image": "Image",
+    "markdown_image_blocked": "[Image blocked: {{alt}}]"
   },
   "operations": {
     "delete_file": "Delete File",

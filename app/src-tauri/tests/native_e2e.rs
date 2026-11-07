@@ -361,15 +361,22 @@ impl Drop for Backend {
 
 #[test]
 fn protected_text_edit_roundtrips_preserve_protection_across_processes() {
-    for mode in ["vault", "passphrase", "vault_and_passphrase"] {
+    for (mode, name) in [
+        ("vault", "private.txt"),
+        ("passphrase", "private.txt"),
+        ("vault_and_passphrase", "private.txt"),
+        ("vault", "private.md"),
+        ("passphrase", "private.MD"),
+        ("vault_and_passphrase", "private.MD"),
+    ] {
         let fixture = Fixture::new();
         let mut app = Backend::start(&fixture.0);
         app.ok(json!({"command":"seed_account","owner":101}));
         app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-        fixture.write("private.txt", b"original secret\r\n");
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,
+        fixture.write(name, b"original secret\r\n");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true,
             "protectionMode":mode,"filePassphrase":"synthetic file password"}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
+        std::fs::remove_file(fixture.path(name)).unwrap();
         let original = fixture.read("original.tdenc");
         let opened = app.ok(json!({"command":"text_read","source":"original.tdenc","filePassphrase":"synthetic file password"}));
         assert_eq!(opened["content"], "original secret\r\n");
@@ -422,9 +429,9 @@ fn protected_text_rejects_wrong_keys_corruption_and_revoked_access_without_delet
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    fixture.write("private.txt", b"keep original");
-    app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
-    std::fs::remove_file(fixture.path("private.txt")).unwrap();
+    fixture.write("private.MD", b"keep original");
+    app.ok(json!({"command":"fixture_encrypt","source":"private.MD","destination":"original.tdenc","text":true,"protectionMode":"vault_and_passphrase","filePassphrase":"file password"}));
+    std::fs::remove_file(fixture.path("private.MD")).unwrap();
     let original = fixture.read("original.tdenc");
     let opened = app.ok(json!({"command":"text_read","source":"original.tdenc"}));
     assert!(app
@@ -468,18 +475,43 @@ fn protected_text_read_enforces_the_one_mib_boundary_without_a_preview_cache() {
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
     app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
-    for size in [1024 * 1024, 1024 * 1024 + 1] {
-        fixture.write("private.txt", vec![b'a'; size]);
-        app.ok(json!({"command":"fixture_encrypt","source":"private.txt","destination":format!("{size}.tdenc"),"text":true}));
-        std::fs::remove_file(fixture.path("private.txt")).unwrap();
-        let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
-        if size == 1024 * 1024 {
-            assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
-        } else {
-            assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+    for name in ["private.txt", "private.MD"] {
+        for size in [1024 * 1024, 1024 * 1024 + 1] {
+            fixture.write(name, vec![b'a'; size]);
+            app.ok(json!({"command":"fixture_encrypt","source":name,"destination":format!("{size}.tdenc"),"text":true}));
+            std::fs::remove_file(fixture.path(name)).unwrap();
+            let request = json!({"command":"text_read","source":format!("{size}.tdenc")});
+            if size == 1024 * 1024 {
+                assert_eq!(app.ok(request)["content"].as_str().unwrap().len(), size);
+            } else {
+                assert!(app.failure(request).contains("TEXT_TOO_LARGE"));
+            }
         }
     }
     assert!(!fixture.path("previews").exists());
+    app.stop();
+}
+
+#[test]
+fn protected_text_rejects_authenticated_non_document_extensions() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic vault password"}));
+    for name in ["private.cmd", "private.md.exe", "privatemd", "privatetxt"] {
+        fixture.write(name, b"not an editable document");
+        app.ok(json!({"command":"fixture_encrypt","source":name,"destination":"original.tdenc","text":true}));
+        std::fs::remove_file(fixture.path(name)).unwrap();
+        let original = fixture.read("original.tdenc");
+        assert!(app
+            .failure(json!({"command":"text_read","source":"original.tdenc"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert!(app
+            .failure(json!({"command":"text_replace","source":"original.tdenc","content":"lost"}))
+            .contains("TEXT_TYPE_UNSUPPORTED"));
+        assert_eq!(fixture.read("original.tdenc"), original);
+        assert!(!fixture.path("text-replacement.tdenc").exists());
+    }
     app.stop();
 }
 

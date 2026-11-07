@@ -459,7 +459,7 @@ pub async fn cmd_get_preview(
     compat_asset(app_handle, folder_id, message_id, false).await
 }
 
-/// Largest `.txt` file the in-app editor will load or save. Kept in step with
+/// Largest `.txt` or `.md` file the in-app editor will load or save. Kept in step with
 /// the frontend guard so the UI can mark oversized files read-only.
 pub const MAX_EDITABLE_TEXT_BYTES: u64 = 1024 * 1024;
 
@@ -482,7 +482,7 @@ fn decode_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// Reads a `.txt` document through the same bounded plaintext preview cache
+/// Reads a `.txt` or `.md` document through the same bounded plaintext preview cache
 /// `cmd_get_preview` uses, capped at `MAX_EDITABLE_TEXT_BYTES`.
 #[tauri::command]
 pub async fn cmd_read_text_file(
