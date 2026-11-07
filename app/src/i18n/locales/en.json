@@ -1,4 +1,14 @@
 {
+  "folder_encryption": {
+    "unlock_required": "Unlock the vault to encrypt this folder name.",
+    "private_required": "Make this folder private before encrypting its name.",
+    "mask_pending": "The name is protected locally, but Telegram may still show the original title. Unlock the vault and choose Encrypt folder name again to finish masking it.",
+    "action": "Encrypt folder name",
+    "confirm": "Encrypt this folder name with your unlocked vault? It will appear as Encrypted while locked, and its children and files will be hidden in this app. Telegram will use a generic channel title. Existing file contents and child channel names are not encrypted by this action. Old titles may remain in Telegram history or backups. Keep your vault recovery backup: it is needed to recover the name on another device.",
+    "success": "Folder name encrypted.",
+    "renamed": "Folder renamed.",
+    "open_locked": "Unlock the vault to open this folder."
+  },
   "hierarchy": {
     "incomplete": "Some folders in the synced history are unavailable after scanning Telegram. Available folders and pending edits are preserved; check channel access and retry.",
     "export": "Export layout backup", "import": "Restore layout backup", "exported": "Layout backup saved. Keep it private: it contains channel relationships, not files.", "backup_large": "Backup exceeds 16 MiB.", "import_preview": "Restore placements for {{count}} folders? Matching folders use the backup placement; other folders and newer history are retained. Missing or deleted channels are never recreated. This explicit repair republishes retained metadata to Telegram and syncs with your other devices. Files are not changed.",

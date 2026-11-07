@@ -2,6 +2,20 @@
 
 Current application target: **Windows only**. Android builds, mobile UI and mobile-only journeys are retired. Android publication checks remain as repository-history protections, not Android support. Historical device/platform observations below are not current support promises.
 
+## Encrypted folder names
+
+From `app/`, run `npx playwright test tests/e2e/folder-encryption.spec.ts tests/e2e/folder-hierarchy.spec.ts --workers=1`.
+The browser journeys use the real frontend with controlled IPC/events for
+encryption confirmation, refusal while locked, lock/unlock withdrawal, rename,
+delayed hierarchy/deletion replies, and confirmation withdrawal. Native command
+`cargo test --locked --manifest-path app/src-tauri/Cargo.toml --features native-e2e --test native_e2e folder_name_encryption -- --test-threads=1`
+crosses child-process restarts, real vault/SQLite persistence, interrupted masking,
+rename, fresh-install recovery, account/folder rebinding rejection, and stale
+WebDAV catalog withdrawal. Telegram publish/title operations use fixture-owned
+files, and WebDAV uses a controlled transport catalog. These checks do not prove
+live Telegram history ordering, title-update behavior, or
+installed WebView integration. See [scope and release acceptance](Docs/FOLDER_NAME_ENCRYPTION.md).
+
 ## Nested folders
 
 From `app/`, `npx playwright test tests/e2e/folder-hierarchy.spec.ts --workers=1`

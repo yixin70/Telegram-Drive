@@ -1,6 +1,6 @@
 import i18n from '../../../i18n';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, Database } from 'lucide-react';
+import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, Database, LockKeyhole } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
 import { BandwidthWidget } from './BandwidthWidget';
@@ -109,6 +109,7 @@ interface SidebarProps {
     setActiveFolderId: (id: number | null) => void;
     onDelete: (id: number, name: string) => void;
     onRename: (id: number, name: string) => void;
+    onEncryptName: (id: number) => void;
     onToggleVisibility: (id: number, name: string, isPublic: boolean) => void;
     onExportInvite: (id: number, name: string) => void;
     onCreate: (name: string, parentId?: number | null) => Promise<void>;
@@ -133,7 +134,7 @@ interface SidebarProps {
 
 export function Sidebar({
     accountId,
-    folders, groups = [], activeFolderId, setActiveFolderId, onDelete, onRename, onToggleVisibility, onExportInvite, onCreate,
+    folders, groups = [], activeFolderId, setActiveFolderId, onDelete, onRename, onEncryptName, onToggleVisibility, onExportInvite, onCreate,
     isSyncing, hierarchyStatus, hierarchyError, isConnected, onSync, onLogout, bandwidth, overview, onOverview, onMoveFolder,
     onAssignFolderToGroup, onCreateGroup, onUpdateGroup, onDeleteGroup, createFolderRequest = 0, activeSmartView = null, onSmartViewChange
 }: SidebarProps) {
@@ -441,23 +442,25 @@ export function Sidebar({
                             )}
                             <SidebarItem
                                 key={folder.id}
-                                icon={Folder}
+                                icon={folder.is_encrypted ? LockKeyhole : Folder}
                                 label={folder.name}
                                 active={activeFolderId === folder.id && !activeSmartView}
                                 onClick={() => { onSmartViewChange?.(null); setActiveFolderId(folder.id); }}
-                                onDelete={() => onDelete(folder.id, folder.name)}
-                                onRename={() => onRename(folder.id, folder.name)}
-                                onToggleVisibility={() => onToggleVisibility(folder.id, folder.name, !!(folder.is_public || folder.username))}
-                                onExportInvite={() => onExportInvite(folder.id, folder.name)}
-                                onCreateChild={() => { setCreateParent(folder.id); setShowNewFolderInput(true); }}
-                                onMoveFolder={() => onMoveFolder(folder)}
+                                locked={folder.is_locked}
+                                onDelete={folder.is_locked ? undefined : () => onDelete(folder.id, folder.name)}
+                                onRename={folder.is_locked ? undefined : () => onRename(folder.id, folder.name)}
+                                onEncryptName={folder.is_locked ? undefined : () => onEncryptName(folder.id)}
+                                onToggleVisibility={folder.is_encrypted ? undefined : () => onToggleVisibility(folder.id, folder.name, !!(folder.is_public || folder.username))}
+                                onExportInvite={folder.is_encrypted ? undefined : () => onExportInvite(folder.id, folder.name)}
+                                onCreateChild={folder.is_locked ? undefined : () => { setCreateParent(folder.id); setShowNewFolderInput(true); }}
+                                onMoveFolder={folder.is_locked ? undefined : () => onMoveFolder(folder)}
                                 expanded={expanded.has(folder.id)}
                                 onToggleExpanded={folders.some(f => f.parent_id === folder.id) ? () => toggleExpanded(folder.id) : undefined}
                                 folderId={folder.id}
                                 isPublic={!!(folder.is_public || folder.username)}
                                 collapsed={settings.sidebarCollapsed}
                                 groups={groups}
-                                onAssignFolderToGroup={onAssignFolderToGroup}
+                                onAssignFolderToGroup={folder.is_locked ? undefined : onAssignFolderToGroup}
                             />
                             </div>
                         ))}

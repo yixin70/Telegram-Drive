@@ -2641,6 +2641,162 @@ fn connection_failures_retry_with_growing_waits_and_removed_transfers_expire() {
 }
 
 #[test]
+fn folder_name_encryption_survives_lock_restart_recovery_and_rejects_rebinding() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private folder fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    assert!(app
+        .failure(json!({"command":"folder_name_encrypt","folder":11}))
+        .contains("Unlock the vault"));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.failure(json!({"command":"folder_name_encrypt","folder":11,"maskFails":true}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Private folder fixture"
+    );
+    app.ok(json!({"command":"vault_lock"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    let view = app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    assert_eq!(view[0]["name"], "Private folder fixture");
+    assert_eq!(view[0]["is_encrypted"], true);
+    app.ok(json!({"command":"folder_name_rename","folder":11,"name":"Renamed private fixture"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    let record = app.ok(json!({"command":"folder_rows"}))[0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(record.starts_with("TDFOLDERNAME1:"));
+    assert!(!record.contains("Renamed private fixture"));
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-title-11")).unwrap(),
+        "Encrypted [TD] [TD-ENCRYPTED]"
+    );
+    assert_eq!(
+        String::from_utf8(fixture.read("folder-name-record-11")).unwrap(),
+        record
+    );
+    app.ok(json!({"command":"folder_name_read","folder":12}));
+    app.ok(json!({"command":"vault_export","passphrase":"synthetic folder recovery password"}));
+    app.ok(json!({"command":"vault_lock"}));
+    let locked = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(locked.as_array().unwrap().len(), 1);
+    assert_eq!(locked[0]["name"], "Encrypted");
+    assert_eq!(locked[0]["is_locked"], true);
+    app.failure(json!({"command":"folder_name_read","folder":11}));
+    app.failure(json!({"command":"folder_name_read","folder":12}));
+    app.failure(
+        json!({"command":"folder_name_rename","folder":11,"name":"Locked rename must fail"}),
+    );
+    assert_eq!(app.ok(json!({"command":"folder_rows"}))[0]["name"], record);
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_unlock","passphrase":"synthetic folder vault password"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    // A scan or external title edit cannot silently downgrade local protection.
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"External title"},{"id":12,"name":"Child fixture"},{"id":13,"name":record}]}));
+    let rebound = app.ok(json!({"command":"folder_name_view"}));
+    assert_eq!(rebound[0]["name"], "Renamed private fixture");
+    assert_eq!(
+        rebound
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["id"] == 13)
+            .unwrap()["is_locked"],
+        true
+    );
+    // Fresh installation: only Telegram's ciphertext and vault recovery travel.
+    app.stop();
+    let restored = Fixture::new();
+    restored.write("recovery.bundle", fixture.read("recovery.bundle"));
+    let mut app = Backend::start(&restored.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Encrypted"
+    );
+    app.ok(json!({"command":"vault_recover","passphrase":"synthetic folder recovery password","vaultPassphrase":"synthetic restored folder vault"}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["name"],
+        "Renamed private fixture"
+    );
+    app.ok(json!({"command":"folder_sign_out"}));
+    app.ok(json!({"command":"seed_account","owner":202}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":record}]}));
+    assert_eq!(
+        app.ok(json!({"command":"folder_name_view"}))[0]["is_locked"],
+        true
+    );
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn folder_name_encryption_withdraws_stale_webdav_catalogs() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"database"}));
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"folder_scan","folders":[{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}]}));
+    app.ok(json!({"command":"hierarchy_move","id":12,"parent":11,"order":2}));
+    app.ok(json!({"command":"vault_create","passphrase":"synthetic folder vault password"}));
+    app.ok(json!({"command":"folder_name_encrypt","folder":11}));
+    // Model a Telegram catalog walk started before protection completing late.
+    app.ok(json!({"command":"api_seed_catalog","folders":[{"id":null,"name":"Saved Messages"},{"id":11,"name":"Private fixture"},{"id":12,"name":"Child fixture"}],"files":[]}));
+    let token = "f".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let url = format!("{}/dav/{token}/", dav["url"].as_str().unwrap());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let propfind = reqwest::Method::from_bytes(b"PROPFIND").unwrap();
+    for locked in [false, true] {
+        if locked {
+            app.ok(json!({"command":"vault_lock"}));
+        }
+        let response = client
+            .request(propfind.clone(), &url)
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 207);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("Saved%20Messages"));
+        assert!(!body.contains("Private"));
+        assert!(!body.contains("Child"));
+        let direct = client
+            .request(propfind.clone(), format!("{url}Private%20fixture/"))
+            .header("depth", "1")
+            .send()
+            .await
+            .unwrap();
+        assert!(!direct.status().is_success());
+    }
+    drop(client);
+    app.stop();
+}
+
+#[test]
 fn each_account_keeps_its_own_folder_groups_across_switches_restarts_and_upgrade() {
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);

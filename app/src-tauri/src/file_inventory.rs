@@ -621,10 +621,26 @@ impl Publication {
         files: &[crate::models::FileMetadata],
         operation: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
+        let folders = crate::folder_names::cached(&self.account)?;
+        let protected_folder = files
+            .iter()
+            .filter_map(|f| f.folder_id)
+            .any(|id| crate::folder_names::has_protected_ancestor(&folders, id));
+        if protected_folder {
+            let projected =
+                crate::folder_names::project(crypto, self.account.owner, folders.clone());
+            if files.iter().filter_map(|f| f.folder_id).any(|id| {
+                crate::folder_names::has_protected_ancestor(&folders, id)
+                    && !projected.iter().any(|f| f.id == id && !f.is_locked)
+            }) {
+                return Err("VAULT_LOCKED: Reload the protected listing".into());
+            }
+        }
         self.ticket.with(&self.account, || {
-            if files
-                .iter()
-                .any(|file| file.encryption_state == "encrypted_unlocked")
+            if protected_folder
+                || files
+                    .iter()
+                    .any(|file| file.encryption_state == "encrypted_unlocked")
             {
                 let credential = self
                     .credential
