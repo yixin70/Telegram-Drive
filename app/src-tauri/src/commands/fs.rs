@@ -1175,6 +1175,8 @@ pub async fn create_folder_inner(
         is_public: false,
         group_id: None,
         display_order: 0,
+        is_encrypted: false,
+        is_locked: false,
     })
 }
 
@@ -1213,6 +1215,11 @@ pub async fn cmd_create_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(
+        &account,
+        app.state::<crate::crypto::state::CryptoState>().inner(),
+        parent_id,
+    )?;
     create_folder_scoped(
         name,
         parent_id,
@@ -1231,6 +1238,9 @@ pub(crate) async fn create_folder_scoped(
     db: DbConnection,
 ) -> Result<FolderMetadata, String> {
     let name = name.trim();
+    if crate::folder_names::protected(name) {
+        return Err("Reserved folder name".into());
+    }
     if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
         return Err("Folder names must contain 1–120 characters without control characters".into());
     }
@@ -1289,6 +1299,8 @@ pub(crate) async fn create_folder(
                     is_public: false,
                     group_id: None,
                     display_order: 0,
+                    is_encrypted: false,
+                    is_locked: false,
                 },
             )?
         }
@@ -1359,6 +1371,11 @@ pub async fn cmd_delete_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(
+        &account,
+        app.state::<crate::crypto::state::CryptoState>().inner(),
+        Some(folder_id),
+    )?;
     delete_folder_scoped(folder_id, &account, state.inner(), db_pool.inner().clone()).await
 }
 
@@ -1411,6 +1428,8 @@ fn folder_stand_in(folder_id: i64, name: String) -> FolderMetadata {
         is_public: false,
         group_id: None,
         display_order: 0,
+        is_encrypted: false,
+        is_locked: false,
     }
 }
 
@@ -1496,6 +1515,16 @@ pub async fn cmd_rename_folder(
     {
         return Err("Folder names must contain 1–120 characters without control characters".into());
     }
+    if crate::folder_names::protected(&new_name) {
+        return Err("Reserved folder name".into());
+    }
+    let crypto = app.state::<crate::crypto::state::CryptoState>();
+    crate::folder_names::ensure_readable(&account, &crypto, Some(folder_id))?;
+    let raw = crate::folder_names::cached(&account)?;
+    let protected = raw
+        .iter()
+        .find(|f| f.id == folder_id)
+        .is_some_and(|f| crate::folder_names::protected(&f.name));
     let client = state
         .client
         .lock()
@@ -1503,13 +1532,33 @@ pub async fn cmd_rename_folder(
         .clone()
         .ok_or("Client not connected")?;
     account.validate_client(&client).await?;
+    if protected {
+        let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
+        let transport = crate::folder_names::TelegramNameTransport {
+            client,
+            peer,
+            state: state.inner(),
+        };
+        return crate::folder_names::rename_protected(
+            &account,
+            &crypto,
+            db_pool.inner().clone(),
+            folder_id,
+            &new_name,
+            &transport,
+        )
+        .await;
+    }
     rename_folder_inner(folder_id, &new_name, &client, &state.peer_cache).await?;
+    let stored_name = new_name;
+    crate::api_catalog::invalidate(account.owner);
+    crate::local_search::invalidate();
     crate::db::with_connection(db_pool.inner().clone(), move |conn| {
         crate::folder_hierarchy::transaction(conn, &account, || {
             let mut stmt = conn
                 .prepare("UPDATE folder_metadata SET name=? WHERE channel_id=?")
                 .map_err(|e| e.to_string())?;
-            stmt.bind((1, new_name.as_str()))
+            stmt.bind((1, stored_name.as_str()))
                 .map_err(|e| e.to_string())?;
             stmt.bind((2, folder_id)).map_err(|e| e.to_string())?;
             stmt.next().map_err(|e| e.to_string())?;
@@ -5664,6 +5713,7 @@ pub async fn cmd_get_files(
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     let workspace_account = crate::workspace::AccountGuard::open(&root, owner_id.as_deref())?;
+    crate::folder_names::ensure_readable(&workspace_account, &crypto_state, folder_id)?;
     let scan_started_at = std::time::Instant::now();
     let request_id = match request_id {
         Some(request_id) if !request_id.trim().is_empty() && request_id.len() <= 128 => request_id,
@@ -6014,6 +6064,8 @@ pub async fn cmd_scan_folders(
                             is_public,
                             group_id: None,
                             display_order: 0,
+                            is_encrypted: false,
+                            is_locked: false,
                         });
                         return cached_peer;
                     }
@@ -6031,6 +6083,8 @@ pub async fn cmd_scan_folders(
                             username,
                             group_id: None,
                             display_order: 0,
+                            is_encrypted: false,
+                            is_locked: false,
                         });
                         return cached_peer;
                     }
@@ -6083,6 +6137,8 @@ pub async fn cmd_scan_folders(
                                 username,
                                 group_id: None,
                                 display_order: 0,
+                                is_encrypted: false,
+                                is_locked: false,
                             })
                         } else {
                             None
@@ -6101,6 +6157,13 @@ pub async fn cmd_scan_folders(
     .await;
     folders.extend(legacy_results.into_iter().flatten());
 
+    for folder in &mut folders {
+        if folder.name.contains(crate::folder_names::MARKER) {
+            let peer = resolve_peer(&client, Some(folder.id), &state.peer_cache).await?;
+            folder.name = crate::folder_names::remote_name(&client, &peer).await?;
+        }
+    }
+
     log::info!(
         "Scan complete. Found {} folders. Peer cache size: {}. Elapsed: {:?}.",
         folders.len(),
@@ -6117,7 +6180,7 @@ pub async fn cmd_scan_folders(
     })
     .await?;
     crate::commands::search::verified_catalog(&catalog_account, &enriched)?;
-    Ok(enriched)
+    crate::folder_names::project_app(&app, Some(catalog_account.owner), enriched)
 }
 
 const MAX_ZIP_SOURCE_BYTES: u64 = 2_147_483_648;
@@ -6358,6 +6421,10 @@ pub async fn cmd_toggle_folder_visibility(
 ) -> Result<FolderMetadata, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let _gate = crate::folder_hierarchy::GATE.lock().await;
+    let raw = crate::folder_names::cached(&account)?;
+    if crate::folder_names::has_protected_ancestor(&raw, folder_id) {
+        return Err("Encrypted folders cannot be made public or shared.".into());
+    }
     let client_opt = { state.client.lock().await.clone() };
     if let Some(client) = &client_opt {
         account.validate_client(client).await?;
@@ -6374,6 +6441,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: make_public,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             },
         )?
     } else {
@@ -6507,6 +6576,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: true,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             }
         } else {
             // Make private: remove username
@@ -6528,6 +6599,8 @@ pub async fn cmd_toggle_folder_visibility(
                 is_public: false,
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             }
         }
     };
@@ -6593,9 +6666,16 @@ pub struct FolderInviteInfo {
 
 #[tauri::command]
 pub async fn cmd_export_folder_invite(
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     folder_id: i64,
     state: State<'_, TelegramState>,
 ) -> Result<FolderInviteInfo, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let raw = crate::folder_names::cached(&account)?;
+    if crate::folder_names::has_protected_ancestor(&raw, folder_id) {
+        return Err("Encrypted folders cannot be made public or shared.".into());
+    }
     let client_opt = { state.client.lock().await.clone() };
 
     #[cfg(debug_assertions)]
@@ -6609,6 +6689,7 @@ pub async fn cmd_export_folder_invite(
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
+    account.validate_client(&client).await?;
     let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
     let (channel_id, access_hash) = match &peer {
         Peer::Channel(c) => (

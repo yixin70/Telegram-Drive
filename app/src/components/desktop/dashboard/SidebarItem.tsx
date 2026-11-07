@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { MoreVertical, Globe, Pencil, Trash2, EyeOff, Eye, Link, ChevronRight, FolderInput, FolderPlus } from 'lucide-react';
+import { MoreVertical, Globe, Pencil, Trash2, EyeOff, Eye, Link, ChevronRight, FolderInput, FolderPlus, LockKeyhole } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -16,6 +16,8 @@ interface SidebarItemProps {
     folderId: number | null;
     isPublic?: boolean;
     onRename?: () => void;
+    onEncryptName?: () => void;
+    locked?: boolean;
     onToggleVisibility?: () => void;
     onExportInvite?: () => void;
     onCreateChild?: () => void;
@@ -32,7 +34,7 @@ interface SidebarItemProps {
  */
 export function SidebarItem({
     icon: Icon, label, active = false, onClick, onDelete, folderId, isPublic, onRename, onToggleVisibility, onExportInvite, collapsed = false,
-    groups = [], onAssignFolderToGroup, onCreateChild, onMoveFolder, expanded, onToggleExpanded
+    groups = [], onAssignFolderToGroup, onCreateChild, onMoveFolder, expanded, onToggleExpanded, onEncryptName, locked = false
 }: SidebarItemProps) {
     const { t } = useTranslation();
 
@@ -48,7 +50,7 @@ export function SidebarItem({
     } = useSortable({
         id: folderId !== null ? `folder-${folderId}` : 'saved-messages',
         data: { kind: 'sidebar-folder', folderId },
-        disabled: folderId === null ? { draggable: true, droppable: false } : false,
+        disabled: locked || (folderId === null ? { draggable: true, droppable: false } : false),
     });
 
     const style = folderId !== null ? {
@@ -78,7 +80,7 @@ export function SidebarItem({
             {...attributes}
             {...listeners}
             aria-disabled={undefined}
-            role={hasFolderActions && !collapsed ? 'group' : attributes.role}
+            role={folderId !== null && !collapsed ? 'group' : attributes.role}
             aria-label={label}
             onKeyDown={event => {
                 if (event.target !== event.currentTarget) return;
@@ -138,7 +140,7 @@ export function SidebarItem({
             )}
 
             {/* Folder Context Menu */}
-            {menuPosition && createPortal((
+            {!locked && menuPosition && createPortal((
                 <div
                     ref={menuRef}
                     className="quiet-menu fixed z-[300] flex min-w-[232px] flex-col gap-1 p-1.5 animate-in fade-in duration-100"
@@ -160,6 +162,7 @@ export function SidebarItem({
                             {t('files.rename')}
                         </button>
                     )}
+                    {onEncryptName && <button className="quiet-menu-item min-h-10 gap-3 px-3 py-2" onClick={() => runAndClose(onEncryptName)}><LockKeyhole className="h-4 w-4" />{t('folder_encryption.action')}</button>}
                     {onCreateChild && <button className="quiet-menu-item min-h-10 gap-3 px-3 py-2" onClick={() => runAndClose(onCreateChild)}><FolderPlus className="h-4 w-4" />{t('hierarchy.new_child')}</button>}
                     {onMoveFolder && <button className="quiet-menu-item min-h-10 gap-3 px-3 py-2" onClick={() => runAndClose(onMoveFolder)}><FolderInput className="h-4 w-4" />{t('hierarchy.move')}</button>}
 

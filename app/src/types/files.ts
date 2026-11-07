@@ -38,6 +38,8 @@ export interface TelegramFolder {
   is_public?: boolean;
   group_id?: number | null;
   display_order?: number;
+  is_encrypted?: boolean;
+  is_locked?: boolean;
 }
 
 export interface FolderGroup {

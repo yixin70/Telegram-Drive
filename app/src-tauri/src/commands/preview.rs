@@ -309,7 +309,17 @@ pub async fn cmd_get_offline_files(
         .app_cache_dir()
         .map_err(|error: tauri::Error| error.to_string())?
         .join("previews");
-    read_offline_files(&account, &cache_dir, limit).await
+    let mut files = read_offline_files(&account, &cache_dir, limit).await?;
+    let crypto = app_handle.state::<crate::crypto::state::CryptoState>();
+    let raw = crate::folder_names::cached(&account)?;
+    let projected = crate::folder_names::project(&crypto, account.owner, raw.clone());
+    files.retain(|f| {
+        f.folder_id.is_none_or(|id| {
+            !crate::folder_names::has_protected_ancestor(&raw, id)
+                || projected.iter().any(|f| f.id == id && !f.is_locked)
+        })
+    });
+    Ok(files)
 }
 
 pub(crate) async fn read_offline_files(

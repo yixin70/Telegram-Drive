@@ -1,4 +1,5 @@
-import { createContext, lazy, Suspense, useContext, useState, ReactNode, useRef } from 'react';
+import { createContext, lazy, Suspense, useContext, useState, ReactNode, useRef, useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { triggerHaptic } from '../services/feedback';
 import type { DownloadCollisionPolicy } from '../types/transfers';
 
@@ -35,7 +36,19 @@ const ConfirmContext = createContext<ConfirmContextType | undefined>(undefined);
 export function ConfirmProvider({ children }: { children: ReactNode }) {
     const [isOpen, setIsOpen] = useState(false);
     const [options, setOptions] = useState<ConfirmOptions>({ title: '', message: '' });
-    const [resolveRef, setResolveRef] = useState<((value: boolean) => void) | null>(null);
+    const resolveRef = useRef<((value: boolean) => void) | null>(null);
+    useEffect(() => {
+        let disposed = false;
+        let stop: (() => void) | undefined;
+        void listen('vault-locked', () => {
+            // Confirmations can contain decrypted folder/file names too.
+            setIsOpen(false);
+            setOptions({ title: '', message: '' });
+            resolveRef.current?.(false);
+            resolveRef.current = null;
+        }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+        return () => { disposed = true; stop?.(); };
+    }, []);
     const [collisionOpen, setCollisionOpen] = useState(false);
     const collisionResolve = useRef<((value: DownloadCollisionPolicy | null) => void) | null>(null);
     const finishCollision = (value: DownloadCollisionPolicy | null) => {
@@ -68,19 +81,22 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         setOptions(opts);
         setIsOpen(true);
         return new Promise<boolean>((resolve) => {
-            setResolveRef(() => resolve);
+            resolveRef.current?.(false);
+            resolveRef.current = resolve;
         });
     };
 
     const handleConfirm = () => {
         triggerHaptic(options.variant === 'danger' ? 'warning' : 'success');
         setIsOpen(false);
-        if (resolveRef) resolveRef(true);
+        resolveRef.current?.(true);
+        resolveRef.current = null;
     };
 
     const handleCancel = () => {
         setIsOpen(false);
-        if (resolveRef) resolveRef(false);
+        resolveRef.current?.(false);
+        resolveRef.current = null;
     };
 
     return (

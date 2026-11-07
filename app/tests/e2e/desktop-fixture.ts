@@ -58,6 +58,8 @@ export async function desktopFixture(page: Page, options: {
     const hierarchyGate = new Promise<void>(resolve => { releaseHierarchy = resolve; });
     let releaseCreateFolder: (() => void) | undefined;
     const createFolderGate = new Promise<void>(resolve => { releaseCreateFolder = resolve; });
+    let releaseDeleteFolder: (() => void) | undefined;
+    const deleteFolderGate = new Promise<void>(resolve => { releaseDeleteFolder = resolve; });
     let releaseVaultUnlock: (() => void) | undefined;
     const vaultUnlockGate = new Promise<void>(resolve => { releaseVaultUnlock = resolve; });
     let releaseSearch:(()=>void)|undefined;const searchGate=new Promise<void>(resolve=>{releaseSearch=resolve;});
@@ -76,6 +78,8 @@ export async function desktopFixture(page: Page, options: {
       releaseHierarchy: () => { state.holdHierarchy = false; releaseHierarchy?.(); },
       holdCreateFolder: false,
       releaseCreateFolder: () => { state.holdCreateFolder = false; releaseCreateFolder?.(); },
+      holdDeleteFolder: false,
+      releaseDeleteFolder: () => { state.holdDeleteFolder = false; releaseDeleteFolder?.(); },
       textSaveFails: false, holdTextRead: options.holdTextRead ?? false,
       releaseText: () => { state.holdTextRead = false; releaseText?.(); },
       notes: JSON.parse(sessionStorage.getItem('desktop-e2e-native-notes') || '{}') as Record<string, {text: string; revision: number}>,
@@ -114,6 +118,12 @@ export async function desktopFixture(page: Page, options: {
       ...(options.protectedVideo ? { encryption: { state: 'encrypted_unlocked', protection_mode: 'vault', metadata_protected: true } } : {}),
       is_favorite: false, type: 'image',
     });
+    const projectedFolders = () => {
+      const folders = state.hierarchyFolders.map(f => ({...f, ...(f.is_encrypted && state.vaultLocked ? {name:'Encrypted',is_locked:true} : {is_locked:false})}));
+      const hidden = new Set(folders.filter(f=>f.is_locked).map(f=>f.id));
+      for(let changed=true;changed;) {changed=false;for(const f of folders) if(hidden.has(f.parent_id)&&!hidden.has(f.id)){hidden.add(f.id);changed=true;}}
+      return folders.filter(f=>!hidden.has(f.parent_id));
+    };
     const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#284b63"/><circle cx="320" cy="240" r="150" fill="#98d8ea"/></svg>')}`;
     Object.assign(window, {
       __desktopTest: state,
@@ -194,12 +204,19 @@ export async function desktopFixture(page: Page, options: {
             if (args.action === 'import') return {added: 0, replaced: 1, unchanged: 0};
             return true;
           }
-          if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return state.hierarchyFolders;
+          if (command === 'cmd_encrypt_folder_name') {
+            if(args.ownerId!==state.owner)throw new Error('ACCOUNT_CHANGED');
+            if(state.vaultLocked)throw new Error('[FOLDER_NAME_VAULT_LOCKED] Unlock the vault to encrypt this folder name.');
+            state.hierarchyFolders=state.hierarchyFolders.map(f=>f.id===args.folderId?{...f,is_encrypted:true}:f);
+            return projectedFolders();
+          }
+          if (command === 'cmd_rename_folder') {state.hierarchyFolders=state.hierarchyFolders.map(f=>f.id===args.folderId?{...f,name:args.newName}:f);return true;}
+          if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return projectedFolders();
           if (command === 'cmd_sync_folder_hierarchy' || command === 'cmd_move_folder') {
             if (args.ownerId !== state.owner) throw new Error('ACCOUNT_CHANGED');
             if (state.hierarchyFails && command === 'cmd_sync_folder_hierarchy') throw new Error('Controlled offline hierarchy transport');
             if (command === 'cmd_move_folder') state.hierarchyFolders = state.hierarchyFolders.map(f => f.id === args.folderId ? { ...f, parent_id: args.parentId, display_order: args.displayOrder } : f);
-            const folders = state.hierarchyFolders.map(folder => ({ ...folder }));
+            const folders = projectedFolders();
             if (command === 'cmd_sync_folder_hierarchy' && state.holdHierarchy) { state.hierarchyHeld = true; await hierarchyGate; }
             return { folders, pending: command === 'cmd_move_folder' ? 1 : 0, conflicts: 0, needs_scan: false };
           }
@@ -209,7 +226,7 @@ export async function desktopFixture(page: Page, options: {
             state.hierarchyFolders.push(folder);
             return folder;
           }
-          if (command === 'cmd_delete_folder') { state.hierarchyFolders = state.hierarchyFolders.filter(f => f.id !== args.folderId); return true; }
+          if (command === 'cmd_delete_folder') { if (state.holdDeleteFolder) await deleteFolderGate; state.hierarchyFolders = state.hierarchyFolders.filter(f => f.id !== args.folderId); return true; }
           // Folder Sync: settings and mappings are kept by this fixture; the
           // plan a preview returns is a stand-in for the native planner.
           if (command === 'cmd_get_sync_settings') return state.sync.settings;

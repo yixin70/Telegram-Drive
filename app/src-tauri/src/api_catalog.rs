@@ -251,6 +251,8 @@ pub async fn discover_folders(
                     username,
                     group_id: None,
                     display_order: 0,
+                    is_encrypted: false,
+                    is_locked: false,
                 });
             }
         }
@@ -301,7 +303,28 @@ pub async fn discover_folders(
                 username: channel.raw.username.clone(),
                 group_id: None,
                 display_order: 0,
+                is_encrypted: false,
+                is_locked: false,
             });
+        }
+    }
+    let cached = crate::folder_names::cached(account).map_err(CatalogError::Account)?;
+    for folder in &mut folders {
+        if folder.name.contains(crate::folder_names::MARKER) {
+            let peer = discovered
+                .get(&folder.id)
+                .ok_or_else(|| CatalogError::Remote("Folder peer missing".into()))?;
+            folder.name = crate::folder_names::remote_name(client, peer)
+                .await
+                .map_err(CatalogError::Remote)?;
+        }
+        if let Some(saved) = cached.iter().find(|f| f.id == folder.id) {
+            folder.parent_id = saved.parent_id;
+            if crate::folder_names::protected(&saved.name)
+                && !crate::folder_names::protected(&folder.name)
+            {
+                folder.name = saved.name.clone();
+            }
         }
     }
     account.validate().map_err(CatalogError::Account)?;
@@ -311,31 +334,53 @@ pub async fn discover_folders(
     Ok(folders)
 }
 
-/// Saved Messages followed by every Telegram Drive folder.
+fn visible_folders(
+    account: &AccountGuard,
+    folders: Arc<Vec<Folder>>,
+) -> Result<Arc<Vec<Folder>>, CatalogError> {
+    // A walk begun before name protection can repopulate the transport cache
+    // after invalidation. Recheck durable protection even for cached catalogs.
+    let raw = crate::folder_names::cached(account).map_err(CatalogError::Account)?;
+    let visible = folders
+        .iter()
+        .filter(|folder| {
+            !crate::folder_names::protected(&folder.name)
+                && !folder
+                    .id
+                    .is_some_and(|id| crate::folder_names::has_protected_ancestor(&raw, id))
+        })
+        .cloned()
+        .collect();
+    account.validate().map_err(CatalogError::Account)?;
+    Ok(Arc::new(visible))
+}
+
+/// Saved Messages followed by every unprotected Telegram Drive folder.
 pub async fn folders(
     account: &AccountGuard,
     state: &TelegramState,
 ) -> Result<Arc<Vec<Folder>>, CatalogError> {
     account.validate().map_err(CatalogError::Account)?;
     if let Some(cached) = cached_folders(account) {
-        return Ok(cached);
+        return visible_folders(account, cached);
     }
     let client = client(account, state).await?;
     let mut folders = vec![Folder {
         id: None,
         name: "Saved Messages".to_string(),
     }];
+    let discovered = discover_folders(account, &client, state).await?;
     folders.extend(
-        discover_folders(account, &client, state)
-            .await?
-            .into_iter()
+        discovered
+            .iter()
+            .filter(|folder| !crate::folder_names::has_protected_ancestor(&discovered, folder.id))
             .map(|folder| Folder {
                 id: Some(folder.id),
-                name: folder.name,
+                name: folder.name.clone(),
             }),
     );
     account.validate().map_err(CatalogError::Account)?;
-    let folders = Arc::new(folders);
+    let folders = visible_folders(account, Arc::new(folders))?;
     catalog().folders.insert(
         account.owner,
         Cached {
@@ -354,6 +399,14 @@ pub async fn listing(
     folder: Option<i64>,
 ) -> Result<Listing, CatalogError> {
     account.validate().map_err(CatalogError::Account)?;
+    // WebDAV/API consumers do not own a vault session. Do not offer a direct
+    // folder-ID bypass of the protected folders omitted from their catalog.
+    let raw = crate::folder_names::cached(account).map_err(CatalogError::Account)?;
+    if folder.is_some_and(|id| crate::folder_names::has_protected_ancestor(&raw, id)) {
+        return Err(CatalogError::Remote(
+            "Encrypted folder is unavailable through this interface".into(),
+        ));
+    }
     #[cfg(feature = "native-e2e")]
     if let Some(cached) = cached_listing(account.owner, folder) {
         return Ok(cached);
