@@ -26,12 +26,14 @@ interface FileExplorerProps {
     error: Error | null;
     viewMode: 'grid' | 'list';
     selectedIds: number[];
+    revealFileId?: number | null;
     activeFolderId: number | null;
     onFileClick: (e: React.MouseEvent, file: TelegramFile, orderedFiles: TelegramFile[]) => void;
     onDelete: (file: TelegramFile) => void;
     onDownload: (file: TelegramFile) => void;
     onPreview: (file: TelegramFile, orderedFiles?: TelegramFile[]) => void;
     onManualUpload: () => void;
+    onNewFile?: () => void;
     onFolderUpload: () => void;
     showFolderUpload: boolean;
     onToggleSelection: (id: number) => void;
@@ -83,8 +85,8 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 }
 
 export function FileExplorer({
-    files, loading, error, viewMode, selectedIds, activeFolderId,
-    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload, showFolderUpload, onToggleSelection, onShare, onRename, onFileMove,
+    files, loading, error, viewMode, selectedIds, revealFileId, activeFolderId,
+    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onNewFile, onFolderUpload, showFolderUpload, onToggleSelection, onShare, onRename, onFileMove,
     folders, cardScale, sortField, sortDirection, onSortChange, onToggleFavorite, onTogglePinned, syncProgress, selectionDisabled = false
 }: FileExplorerProps) {
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
@@ -175,6 +177,20 @@ export function FileExplorer({
         listVirtualizer.scrollToOffset(0);
     }, [activeFolderId, gridVirtualizer, listVirtualizer]);
 
+    const revealedFile = useRef<number | null>(null);
+    useEffect(() => {
+        if (revealFileId == null) { revealedFile.current = null; return; }
+        if (loading || revealedFile.current === revealFileId) return;
+        const index = sortedFiles.findIndex(file => file.id === revealFileId);
+        if (index < 0) return;
+        const frame = requestAnimationFrame(() => {
+            if (viewMode === 'grid') gridVirtualizer.scrollToIndex(Math.floor(index / columns), { align: 'auto' });
+            else listVirtualizer.scrollToIndex(index, { align: 'auto' });
+            revealedFile.current = revealFileId;
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [revealFileId, loading, sortedFiles, viewMode, columns, gridVirtualizer, listVirtualizer]);
+
     // Remeasure the grid virtualizer when columns or cardHeight changes to prevent overlapping
     useEffect(() => {
         gridVirtualizer.measure();
@@ -222,7 +238,7 @@ export function FileExplorer({
     if (files.length === 0) {
         return (
             <div className="flex-1 overflow-auto p-3">
-                <EmptyState onUpload={onManualUpload} />
+                    <EmptyState onUpload={onManualUpload} onNewFile={onNewFile} />
             </div>
         );
     }

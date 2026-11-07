@@ -895,6 +895,7 @@ export function useFileUpload(
 
     return {
         uploadQueue: uploadQueue.filter(item => Boolean(ownerId) && item.ownerId === ownerId),
+        chooseAndStageProtection,
         enqueueUploadItems,
         handleManualUpload,
         handleFolderUpload,

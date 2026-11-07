@@ -21,6 +21,7 @@ export async function desktopFixture(page: Page, options: {
   pdfBase64?: string;
   /** Plain-text body listed as "Fixture notes.txt" and served through the text commands. */
   textContent?: string;
+  emptyFolder?: boolean;
   protectedText?: boolean;
   textRequirePassphrase?: 'read' | 'save';
   holdTextRead?: boolean;
@@ -68,7 +69,12 @@ export async function desktopFixture(page: Page, options: {
     const notesGate = new Promise<void>(resolve => {releaseNotes = resolve;});
     let releaseText: (() => void) | undefined;
     const textGate = new Promise<void>(resolve => { releaseText = resolve; });
+    let releaseCreation: (() => void) | undefined;
+    const creationGate = new Promise<void>(resolve => { releaseCreation = resolve; });
     const state = {
+      holdCreation: false, creationReplyLost: false as boolean | 'transport',
+      releaseCreation: () => { state.holdCreation = false; releaseCreation?.(); },
+      publishedCreations: [] as { id: number; name: string; folderId: number | null; ownerId: string }[],
       textContent: options.textContent, textMessageId: 88,
       hierarchyFolders: [{ id: 9, name: 'Photos', display_order: 0, parent_id: null }] as any[],
       hierarchyFails: false,
@@ -243,7 +249,8 @@ export async function desktopFixture(page: Page, options: {
               throw new Error('VAULT_LOCKED: Publication revoked');
             }
             if (state.holdFiles && owner === '101') await fileGate;
-            const files = [{ ...file(42, args.folderId, owner), ...(state.inventoryName ? { name: state.inventoryName } : {}) }];
+            const files = options.emptyFolder ? [] : [{ ...file(42, args.folderId, owner), ...(state.inventoryName ? { name: state.inventoryName } : {}) }];
+            for (const created of state.publishedCreations) if (created.ownerId === owner && created.folderId === args.folderId) files.push({ ...file(created.id, args.folderId, owner), name: created.name, mime_type: 'text/plain', file_ext: created.name.split('.').pop() });
             if (options.extraPhoto) files.push({...file(43,args.folderId,owner),name:'Holiday second photo.jpg'});
             if (options.pdfBase64) files.push({ ...file(77, args.folderId, owner), name: 'Fixture report.pdf', mime_type: 'application/pdf', file_ext: 'pdf', type: 'document' });
             if (options.textContent !== undefined) files.push({ ...file(state.textMessageId, args.folderId, owner), name: 'Fixture notes.txt', mime_type: 'text/plain', file_ext: 'txt', type: 'document', encryption_state: options.protectedText ? 'encrypted_unlocked' : 'plain' });
@@ -300,6 +307,21 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_encryption_settings' || command === 'cmd_update_encryption_settings') return args.settings ?? { default_mode: 'none' };
           if (command === 'cmd_get_file_encryption_info') return { state: 'plain', protection_mode: 'none' };
           if (command === 'cmd_transfer_list') return state.jobs;
+          if (command === 'cmd_create_file') {
+            const request = args.request;
+            if (state.holdCreation) await creationGate;
+            const existing = state.jobs.find(job => job.id === request.id);
+            if (existing) return existing;
+            const job = { ...request, content: undefined, createdSource: { id: request.id }, direction: 'upload', kind: 'local_upload', status: 'paused', progress: 0,
+              transferredBytes: 0, totalBytes: new TextEncoder().encode(request.content).length, speedBytesPerSec: 0, queuePosition: 1, revision: 1, createdAt: Date.now(), updatedAt: Date.now() };
+            state.jobs.push(job); state.emit('transfer-upserted', job);
+            if (state.creationReplyLost) {
+              const lost = state.creationReplyLost;
+              state.creationReplyLost = false;
+              throw lost === 'transport' ? 'IPC reply unavailable' : '[CREATE_REVIEW_REQUIRED] Queue reply was lost';
+            }
+            return job;
+          }
           if (command === 'cmd_transfer_enqueue_many') return args.requests.map((request: any) => ({
             ...request, status: 'paused', progress: 0, transferredBytes: 0, totalBytes: request.totalBytes ?? 0,
             speedBytesPerSec: 0, queuePosition: 0, revision: 1, createdAt: Date.now(), updatedAt: Date.now(),

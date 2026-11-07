@@ -1,6 +1,8 @@
 import { clearImageMemoryCaches } from '../../services/imagePreviewCache';
 import { sourceFolder } from '../../services/fileIdentity';
 import { folderPath } from '../../services/folderHierarchy';
+import { createCloudFile } from '../../services/fileCreation';
+import type { DesktopTransferJob } from '../../services/desktopTransferEngine';
 import { lazy, Suspense, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {NotesAccountContext} from '../../context/NotesAccountContext';
 import { ORGANIZE_FILES_EVENT } from '../../services/workspace';
@@ -59,6 +61,7 @@ import { getAdjacentPreview, previewFileKey, samePreviewFile as sameFile } from 
 import i18n from '../../i18n';
 
 const LazyNotesHost = lazy(() => import('./dashboard/FileNoteButtonContent').then(module => ({default: module.FileNotesHost})));
+const CreateFileDialog = lazy(() => import('./dashboard/CreateFileDialog').then(module => ({ default: module.CreateFileDialog })));
 const FolderNavigation = lazy(() => import('../FolderNavigation').then(module => ({ default: module.FolderNavigation })));
 const FolderHierarchyBackup = lazy(() => import('../FolderHierarchyBackup').then(module => ({ default: module.FolderHierarchyBackup })));
 const MoveToFolderModal = lazy(() => import('./dashboard/MoveToFolderModal').then(module => ({ default: module.MoveToFolderModal })));
@@ -130,6 +133,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const [createFolderRequest, setCreateFolderRequest] = useState(0);
+    const [createFileScope, setCreateFileScope] = useState<string | null>(null);
+    const [revealCreatedFile, setRevealCreatedFile] = useState<number | null>(null);
     const [activeSmartView, setActiveSmartView] = useState<SmartView | null>('recents');
     const [folderOverview, setFolderOverview] = useState(false);
     const [movingFolder, setMovingFolder] = useState<TelegramFolder | null>(null);
@@ -178,6 +183,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             fileLoadSequenceRef.current++;
             setPreviewFile(file => file?.encryption_state === 'encrypted_unlocked' ? null : file);
             setMoveRequest(null);
+            setCreateFileScope(null);
             setFolderSyncProgress({ active: false, count: 0 });
             void queryClient.cancelQueries({ queryKey: ['files'] }).then(() => {
                 if (disposed) return;
@@ -318,6 +324,28 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     }, [allFiles, searchResults, searchTerm, searchFilters, folders, activeSmartView, t]);
     const isCrossFolderView = folderOverview || activeSmartView !== null
         || searchFilters.scope === 'all';
+    const creationScope = JSON.stringify([fileLoadScope, searchFilters.scope]);
+    const creationScopeRef = useRef(creationScope);
+    creationScopeRef.current = creationScope;
+    const openCreateFile = !isCrossFolderView && accountId ? () => setCreateFileScope(creationScope) : undefined;
+    useEffect(() => { setCreateFileScope(null); setRevealCreatedFile(null); }, [creationScope]);
+    const creationNotices = useRef(new Set<string>());
+    useEffect(() => {
+        if (!accountId || isCrossFolderView) return;
+        let disposed = false;
+        let stop: (() => void) | undefined;
+        void listen<DesktopTransferJob>('transfer-upserted', async ({ payload: job }) => {
+            if (disposed || !job.createdSource || job.status !== 'completed' || job.persistencePending || job.ownerId !== accountId || job.folderId !== activeFolderId || !job.messageId || creationNotices.current.has(job.id)) return;
+            creationNotices.current.add(job.id);
+            await invalidateFolderFileQueries(queryClient, job.folderId, job.ownerId);
+            if (disposed) return;
+            const files = queryClient.getQueryData<TelegramFile[]>(fileQueryKey(accountId, activeFolderId)) ?? [];
+            const visible = filterAndRankFiles(files, searchTerm, searchFilters).some(file => file.id === job.messageId);
+            if (visible) { setSelectedIds([job.messageId]); setRevealCreatedFile(job.messageId); }
+            else toast.info(t('file_creation.filtered'));
+        }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+        return () => { disposed = true; stop?.(); };
+    }, [accountId, activeFolderId, isCrossFolderView, queryClient, searchTerm, searchFilters, t]);
     useEffect(() => { if (isCrossFolderView) setSelectedIds([]); }, [isCrossFolderView]);
 
     const handleManualSync = useCallback(async () => {
@@ -338,7 +366,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     });
 
 
-    const { uploadQueue, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
+    const { uploadQueue, chooseAndStageProtection, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
     const { downloadQueue, queueDownload, queueBulkDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads, pauseAll: pauseDownloads, resumeAll: resumeDownloads, cancelItem: cancelDownloadItem, retryItem: retryDownloadItem } = useFileDownload(store, undefined, undefined, accountId ?? undefined);
 
     const {
@@ -935,6 +963,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onSettingsClick={() => setShowSettings(true)}
                     onRemoteUploadClick={() => setShowRemoteUpload(true)}
                     onNewFolderClick={() => setCreateFolderRequest((value) => value + 1)}
+                    onNewFileClick={openCreateFile}
                     onShowShortcuts={() => setShowShortcuts(true)}
                     onShowHelp={() => setShowHelp(true)}
                 />}
@@ -963,6 +992,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onDownload={(file) => queueDownload(file.id, file.name, sourceFolder(file, activeFolderId), file.size)}
                     onPreview={handlePreview}
                     onManualUpload={handleManualUpload}
+                    onNewFile={openCreateFile}
+                    revealFileId={revealCreatedFile}
                     onFolderUpload={handleFolderUpload}
                     showFolderUpload={settings.zipFolders}
                     onToggleSelection={handleToggleSelection}
@@ -979,6 +1010,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     selectionDisabled={isCrossFolderView}
                 />}
             </section>
+            {createFileScope === creationScope && openCreateFile && accountId && <Suspense fallback={null}><CreateFileDialog key={creationScope} destination={currentViewName} onClose={() => setCreateFileScope(null)} prepareProtection={chooseAndStageProtection} onCreate={async (id, filename, content, protection) => {
+                if (creationScopeRef.current !== creationScope) throw new Error('ACCOUNT_CHANGED');
+                const job = await createCloudFile(id, accountId, activeFolderId, filename, content, protection);
+                if (creationScopeRef.current !== creationScope) return;
+                if (job.status === 'completed') await invalidateFolderFileQueries(queryClient, activeFolderId, accountId);
+                else toast.info(t('file_creation.queued'));
+            }} /></Suspense>}
             {movingFolder && <Suspense fallback={null}><MoveToFolderModal folders={folders} movingFolderId={movingFolder.id} activeFolderId={movingFolder.parent_id ?? null} onClose={() => setMovingFolder(null)} onSelect={async parent => {
                 try { await handleMoveFolder(movingFolder.id, parent); setMovingFolder(null); }
                 catch (error) { toast.error(String(error)); }

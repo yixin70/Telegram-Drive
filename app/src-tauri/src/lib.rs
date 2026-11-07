@@ -67,6 +67,7 @@ fn init_com_on_worker_thread() {
 pub mod bandwidth;
 pub mod commands;
 mod external_files;
+pub(crate) mod file_creation;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod heic;
 mod legacy_external;
@@ -1250,6 +1251,7 @@ pub(crate) fn invoke_handler(
         commands::cmd_download_file,
         commands::cmd_move_files,
         commands::cmd_create_folder,
+        file_creation::cmd_create_file,
         folder_hierarchy::cmd_move_folder,
         folder_hierarchy::cmd_folder_hierarchy_backup,
         folder_hierarchy::cmd_sync_folder_hierarchy,

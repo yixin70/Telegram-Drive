@@ -1,5 +1,10 @@
 import { defineConfig } from '@playwright/test';
 
+// Separate worktrees must not silently exercise another checkout's dev server.
+const port = Number(process.env.PLAYWRIGHT_PORT ?? '4173');
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PLAYWRIGHT_PORT');
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -17,7 +22,7 @@ export default defineConfig({
     },
   },
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL,
     browserName: 'chromium',
     colorScheme: 'dark',
     deviceScaleFactor: 1,
@@ -28,8 +33,8 @@ export default defineConfig({
     viewport: { width: 1280, height: 900 },
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4173',
-    url: 'http://127.0.0.1:4173/',
-    reuseExistingServer: !process.env.CI,
+    command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+    url: `${baseURL}/`,
+    reuseExistingServer: !process.env.CI && !process.env.PLAYWRIGHT_PORT,
   },
 });

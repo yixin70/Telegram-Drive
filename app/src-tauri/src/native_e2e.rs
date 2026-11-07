@@ -1696,6 +1696,11 @@ impl Driver {
             | "upload_assemble"
             | "publish_download"
             | "save_transfer"
+            | "creation_stage"
+            | "creation_verify"
+            | "creation_begin"
+            | "creation_finish"
+            | "creation_sweep"
             | "transfers"
             | "fail_transfer"
             | "remove_transfer" => self.dispatch_transfers(request).await,
@@ -5221,6 +5226,48 @@ impl Driver {
                 .await?;
                 serde_json::to_value(result).map_err(error)
             }
+            // Child-process/private-storage boundary using production staging,
+            // receipt and publication-latch code. No Telegram scheduler here.
+            "creation_stage" => {
+                let input: crate::file_creation::CreateFileRequest =
+                    serde_json::from_value(request["request"].clone()).map_err(error)?;
+                let source = input.validate()?;
+                let account = AccountGuard::open(&self.root, Some(&input.owner_id))?;
+                let path = crate::file_creation::stage(&account, &input, &source)?;
+                Ok(json!({"source":source,"path":path}))
+            }
+            "creation_verify" | "creation_begin" | "creation_finish" => {
+                let account = AccountGuard::open(&self.root, request["owner"].as_str())?;
+                let source: crate::file_creation::CreatedSource =
+                    serde_json::from_value(request["source"].clone()).map_err(error)?;
+                match text(&request, "command")? {
+                    "creation_verify" => {
+                        crate::file_creation::verify(&account, &source, text(&request, "path")?)?;
+                        Ok(
+                            json!({"messageId":crate::file_creation::publication_result(&account, &source)?}),
+                        )
+                    }
+                    "creation_begin" => {
+                        crate::file_creation::latch_publication(&account, &source)?;
+                        Ok(json!(true))
+                    }
+                    _ => {
+                        let id = request["messageId"].as_i64().ok_or("Missing messageId")? as i32;
+                        crate::file_creation::with_source(account, source, async {
+                            crate::file_creation::finish_publication(id)
+                        })
+                        .await?;
+                        Ok(json!(true))
+                    }
+                }
+            }
+            "creation_sweep" => {
+                let account = AccountGuard::open(&self.root, request["owner"].as_str())?;
+                let (_, jobs) =
+                    crate::transfer_engine::TransferStore::open(&self.root.join("transfers.db"))?;
+                crate::file_creation::sweep_orphans(&account, &jobs)?;
+                Ok(json!(true))
+            }
             "save_transfer" => {
                 let (store, _) =
                     crate::transfer_engine::TransferStore::open(&self.root.join("transfers.db"))?;
@@ -5330,7 +5377,15 @@ impl Driver {
 
     /// Generate fixture ciphertext with production slot construction and encoding.
     async fn create_encrypted_fixture(&self, request: &Value) -> Result<Value, String> {
-        let source = child(&self.root, text(request, "source")?)?;
+        let source = if !request["createdSource"].is_null() {
+            let owned = serde_json::from_value(request["createdSource"].clone()).map_err(error)?;
+            let account = AccountGuard::open(&self.root, None)?;
+            let path = text(request, "source")?;
+            crate::file_creation::verify(&account, &owned, path)?;
+            PathBuf::from(path)
+        } else {
+            child(&self.root, text(request, "source")?)?
+        };
         let destination = child(&self.root, text(request, "destination")?)?;
         let input = tokio::fs::File::open(&source).await.map_err(error)?;
         let size = input.metadata().await.map_err(error)?.len();
