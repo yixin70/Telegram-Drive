@@ -95,6 +95,11 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         accountId, handleMoveFolder, hierarchyStatus, hierarchyError, hierarchyConflicts,
     } = useTelegramConnection(onLogout);
 
+    // Account lifetime belongs to the dashboard, not the lazy notes dialog host.
+    // A late host mount can replay its effects after rows have already fetched notes.
+    useLayoutEffect(() => () => {
+        window.dispatchEvent(new Event('file-notes-account-changed'));
+    }, [accountId]);
 
     useEffect(() => {
         let closed = false;

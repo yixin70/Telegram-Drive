@@ -51,10 +51,21 @@ test('protected notes and unsaved drafts disappear on locking', async ({page}) =
 
 test('cold hover has no timer or extra fetch, and a held protected response is discarded after lock', async ({page}) => {
   await desktopFixture(page, {video: true, protectedVideo: true, encryptionReady: true, vaultState: 'unlocked', holdNotes: true});
+  await page.addInitScript(() => {
+    (window as any).__notesLifecycle = [];
+    for (const type of ['file-notes-account-changed', 'file-notes-revoke', 'file-notes-unlocked']) {
+      window.addEventListener(type, () => (window as any).__notesLifecycle.push({type, time: performance.now(), stack: new Error().stack}));
+    }
+  });
   await page.goto('/');
   const icon = page.getByRole('button', {name: 'Notes for Holiday folder video.mp4', exact: true});
   await expect(icon).toBeVisible();
-  await expect.poll(async () => (await nativeCalls(page, 'cmd_file_notes')).length).toBe(1);
+  try {
+    await expect.poll(async () => (await nativeCalls(page, 'cmd_file_notes')).length).toBe(1);
+  } catch (error) {
+    console.log('NOTES_STARTUP_DIAGNOSTIC', JSON.stringify({calls: await nativeCalls(page, 'cmd_file_notes'), events: await page.evaluate(() => (window as any).__notesLifecycle)}));
+    throw error;
+  }
   // Dispatch pointer enter and inspect in the next animation frame: there is no hover timer.
   const loading = await icon.evaluate(async element => {
     element.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));

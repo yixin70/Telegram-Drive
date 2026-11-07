@@ -174,13 +174,13 @@ as an intermittent failure, not silently counted as a clean integrated suite.
 
 A matching 55-test comparison, covering every journey preceding that failure
 and the full notes suite, passed **55/55** on an isolated, unmodified export of
-`origin/main` (`61a9f8f`) and **55/55** on this PR. The notes implementation and
-notes test are unchanged from that main revision. These subset passes do not
-establish a clean full integrated suite or prove that the full-run failure
-already exists on main. Its cause remains unconfirmed. Temporary diagnostic
-logging was removed; the original one-read assertion remains intact.
+`origin/main` (`61a9f8f`) and **55/55** on this PR. At that comparison point, the
+notes implementation and notes test were unchanged from that main revision.
+These subset passes do not establish a clean full integrated suite or prove that the full-run failure
+already exists on main. The cause was still unconfirmed and the comparison's
+temporary logging was removed; the original one-read assertion remains intact.
 
-The targeted notes, confirmation and updater-absence suites then passed
+The targeted notes, confirmation and updater-absence suites also passed
 **46/46** with `--repeat-each=2`, including both repetitions of the previously
 failing cold-hover case. No notes code or notes assertions were changed; this
 does not establish the intermittent failure's cause. Integrated native E2E
@@ -194,6 +194,36 @@ Integrated Clippy passed again with `--features native-e2e --lib --all-targets
 PR #3 currently has no GitHub status-check runs. Local results are not described
 as passing GitHub CI; no workflow, repository-protection or Actions setting was
 changed to enable the merge.
+
+### Notes lifecycle investigation
+
+A diagnostic full run passed **188/188**, but this did not establish a fix.
+Repeating the exact cold-hover journey 50 times then reproduced **2 failures and
+48 passes**. Both failures captured two identical reads for owner `101`, folder
+`9`, message `42`. The only account-change event came from the lazy
+`FileNotesHost` layout-effect cleanup, with React's `doubleInvokeEffectsOnFiber`
+in the stack. This was a development-mode effect replay, not a real account
+change. That event invalidated the already-loading session and queued the second
+read. Neither request had an empty locations list.
+
+Account cleanup now belongs to the dashboard's account lifecycle rather than
+the independently lazy-mounted notes host. Real owner changes and dashboard
+unmounts still synchronously close the editor, clear cached notes and invalidate
+old response generations; vault-lock behavior is unchanged. The existing
+one-read, immediate-hover, held-response/lock, account-switch and draft-discard
+assertions are retained. Failure diagnostics capture native calls and lifecycle
+stacks without accepting extra reads. No dependency or timeout was changed.
+
+After this lifecycle fix, the exact journey passed **50/50** repetitions and the
+complete integrated browser/visual suite passed **188/188**, including account
+switching, protected-note/draft withdrawal, all twelve updater-absence journeys
+and the three confirmation journeys. TypeScript/production build, unchanged
+bundle budgets, localization, test policy, application-security policy and diff
+checks passed again. Final initial JavaScript is 477,543/513,000 bytes, total
+JavaScript 2,572,311/3,300,000 bytes and dashboard route 288,006/302,000 bytes.
+This is a root-cause-directed change with before/after regression evidence, not
+merely a passing retry of the unchanged implementation. It does not establish
+installed Windows, live Telegram or signed-upgrade acceptance.
 
 ## Remaining release acceptance
 
